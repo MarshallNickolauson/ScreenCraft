@@ -26,6 +26,38 @@ function animK(a, t) {
   return ease(clamp01(Math.min((t - a.sourceStartMs) / ms, (a.sourceEndMs - t) / ms)));
 }
 
+// letters with a right-to-left base direction (bidi classes R, AL)
+const RTL = /[\p{Script=Arabic}\p{Script=Hebrew}\p{Script=Syriac}\p{Script=Thaana}\p{Script=Nko}\p{Script=Adlam}\p{Script=Hanifi_Rohingya}\p{Script=Mandaic}]/u;
+
+/** True when the first strongly-directed letter is RTL — the same rule `dir=auto` uses. */
+function startsRtl(text) {
+  for (const ch of String(text || "")) {
+    if (RTL.test(ch)) return true;
+    if (/\p{L}/u.test(ch)) return false;
+  }
+  return false;
+}
+
+/** Words of a caption line in left-to-right draw order, keeping their logical indices. */
+function wordOrder(ws, rtl) {
+  // group same-direction words into runs; RTL runs draw right-to-left, and in an RTL
+  // paragraph the run order itself is reversed
+  const runs = [];
+  ws.forEach((w, k) => {
+    const r = RTL.test(w);
+    const last = runs[runs.length - 1];
+    if (last && last.rtl === r) last.w.push([w, k]);
+    else runs.push({ rtl: r, w: [[w, k]] });
+  });
+  if (rtl) runs.reverse();
+  return runs.flatMap((run) => (run.rtl ? run.w.reverse() : run.w));
+}
+
+const graphemes = (() => {
+  const seg = typeof Intl !== "undefined" && Intl.Segmenter ? new Intl.Segmenter(undefined, { granularity: "grapheme" }) : null;
+  return (s) => (seg ? [...seg.segment(s)].map((x) => x.segment) : [...s]);
+})();
+
 function wrapLines(ctx, text, maxW) {
   const out = [];
   for (const para of String(text || "").split("\n")) {
@@ -36,6 +68,16 @@ function wrapLines(ctx, text, maxW) {
         out.push(line.trimEnd());
         line = word.trimStart();
       } else line = test;
+      // a word wider than the box on its own (no spaces to break at, e.g. Lao) splits
+      // between grapheme clusters so it still fits
+      while (ctx.measureText(line).width > maxW) {
+        const gs = graphemes(line);
+        if (gs.length < 2) break;
+        let n = gs.length - 1;
+        while (n > 1 && ctx.measureText(gs.slice(0, n).join("")).width > maxW) n--;
+        out.push(gs.slice(0, n).join(""));
+        line = gs.slice(n).join("");
+      }
     }
     out.push(line.trimEnd());
   }
@@ -311,6 +353,9 @@ export function drawSubtitles(ctx, W, H, p, tSrc, s) {
       }
     }
   }
+  // RTL captions are painted word by word, so the words have to be re-ordered for
+  // drawing — one fillText call only shapes inside a single word
+  const rtl = startsRtl(text);
   ctx.textAlign = "left";
   const space = ctx.measureText(" ").width;
   let wi = 0;
@@ -319,15 +364,16 @@ export function drawSubtitles(ctx, W, H, p, tSrc, s) {
     const ws = l.split(/\s+/).filter(Boolean);
     const widths = ws.map((w) => ctx.measureText(w).width);
     const total = widths.reduce((a, b) => a + b, 0) + space * Math.max(0, ws.length - 1);
+    const seq = wordOrder(ws, rtl);
     let x = -total / 2;
     const first = wi;
     if (ow > 0) {
       ctx.strokeStyle = st.outlineColor || "#000";
       ctx.lineWidth = ow * 2;
-      ws.forEach((w, k) => { ctx.strokeText(w, x, y); x += widths[k] + space; });
+      seq.forEach(([w, k]) => { ctx.strokeText(w, x, y); x += widths[k] + space; });
     }
     x = -total / 2;
-    ws.forEach((w, k) => {
+    seq.forEach(([w, k]) => {
       ctx.fillStyle = first + k === active ? st.highlight : st.color || "#fff";
       ctx.fillText(w, x, y);
       x += widths[k] + space;

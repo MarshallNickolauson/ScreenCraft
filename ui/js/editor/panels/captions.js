@@ -69,6 +69,16 @@ const WHISPER_MODELS = [
   ["tiny.en", "Fastest · English · 78 MB"],
   ["base", "Multilingual · 148 MB"],
 ];
+const WHISPER_LANGS = [
+  ["auto", "Auto"],
+  ["en", "English"],
+  ["es", "Spanish"],
+  ["fr", "French"],
+  ["de", "German"],
+  ["ar", "Arabic"],
+  ["it", "Italian"],
+  ["lo", "Lao"],
+];
 const STAGE = { audio: "Reading audio…", model: "Loading model…", transcribe: "Transcribing", download: "Downloading model", done: "Done" };
 const whisper = { model: "small.en", language: "auto", busy: false, msg: "", have: {} };
 
@@ -121,12 +131,26 @@ export function panelCaptions(p) {
   const pick = el('<div class="field"><label><span>Model</span></label><select></select></div>');
   const sel = pick.querySelector("select");
   for (const [id, label] of WHISPER_MODELS) sel.add(new Option(label, id, false, id === whisper.model));
-  sel.onchange = () => { whisper.model = sel.value; hooks.renderPanel(); };
+  sel.onchange = () => {
+    whisper.model = sel.value;
+    // an English-only model cannot serve the chosen language
+    if (sel.value.endsWith(".en") && whisper.language !== "auto" && whisper.language !== "en") whisper.language = "en";
+    hooks.renderPanel();
+  };
   sel.onkeydown = (e) => e.stopPropagation();
   p.append(pick);
-  if (!whisper.model.endsWith(".en")) {
-    p.append(segmented("Language", [["auto", "Auto"], ["en", "English"], ["es", "Spanish"], ["fr", "French"], ["de", "German"]], () => whisper.language, (v) => (whisper.language = v), { track: false }));
-  }
+  // eight options do not fit a segmented row, so the language is a drop-down like the model
+  const lpick = el('<div class="field"><label><span>Language</span></label><select></select></div>');
+  const lsel = lpick.querySelector("select");
+  for (const [id, label] of WHISPER_LANGS) lsel.add(new Option(label, id, false, id === whisper.language));
+  lsel.onchange = () => {
+    whisper.language = lsel.value;
+    // non-English speech needs a multilingual model; swap an English-only one for `base`
+    if (lsel.value !== "auto" && lsel.value !== "en" && whisper.model.endsWith(".en")) whisper.model = "base";
+    hooks.renderPanel();
+  };
+  lsel.onkeydown = (e) => e.stopPropagation();
+  p.append(lpick);
   const gen = el(`<button class="btn-line" ${whisper.busy ? "disabled" : ""}>${whisper.busy ? "Working…" : "Generate captions"}</button>`);
   gen.onclick = () => generateCaptions(hooks.renderPanel);
   p.append(gen);
@@ -156,6 +180,7 @@ export function panelCaptions(p) {
     p.append(h3("Selected caption"));
     const w = el('<div class="field"><label><span>Text</span></label><textarea rows="3" spellcheck="false"></textarea></div>');
     const ta = w.querySelector("textarea");
+    ta.dir = "auto";
     ta.value = cap.text || "";
     ta.oninput = () => change("cap-" + cap.id, () => (cap.text = ta.value), { track: false, timeline: true });
     ta.onkeydown = (e) => e.stopPropagation();
@@ -168,7 +193,7 @@ export function panelCaptions(p) {
   } else if (list.length) {
     p.append(h3(`${list.length} caption${list.length === 1 ? "" : "s"}`));
     for (const c of list.slice(0, 60)) {
-      const r = el('<button class="note-row"></button>');
+      const r = el('<button class="note-row" dir="auto"></button>');
       const t0 = srcToOut(c.sourceStartMs);
       r.textContent = `${t0 != null ? fmt(t0) : "—"}  ${(c.text || "").replace(/\s+/g, " ").slice(0, 34) || "(empty)"}`;
       r.onclick = () => {

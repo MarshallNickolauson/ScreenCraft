@@ -170,7 +170,10 @@ fn recognize(
     params.set_token_timestamps(true);
     params.set_max_len(1);
     params.set_split_on_word(true);
-    params.set_initial_prompt("Hello, and welcome. Today, we're going to talk about something important.");
+    // the style hint is English, so it stays off for other languages
+    if lang == "en" || lang == "auto" {
+        params.set_initial_prompt("Hello, and welcome. Today, we're going to talk about something important.");
+    }
     params.set_progress_callback_safe(on_progress);
 
     state.full(params, pcm).map_err(|e| format!("transcription failed: {e}"))?;
@@ -248,8 +251,8 @@ fn chunk(words: Vec<(String, f64, f64)>) -> Vec<Caption> {
         last_end = Some(t1);
         let t = text.trim_end_matches(['"', '\'', ')', '”', '’']).to_string();
         cur.push((text, t0, t1));
-        let hard = t.ends_with('.') || t.ends_with('?') || t.ends_with('!');
-        let soft = t.ends_with(',') || t.ends_with(';') || t.ends_with(':') || t.ends_with('—');
+        let hard = t.ends_with(['.', '?', '!', '؟']);
+        let soft = t.ends_with([',', ';', ':', '—', '،', '؛']);
         if hard || (soft && cur.len() >= 2) {
             flush(&mut cur, &mut out, &mut chars);
         }
@@ -324,5 +327,22 @@ mod tests {
             println!("{:.0}-{:.0} {}", c.start_ms, c.end_ms, c.text);
         }
         assert!(!caps.is_empty());
+    }
+
+    #[test]
+    fn chunks_break_on_arabic_punctuation() {
+        let w = |s: &str, t0: f64, t1: f64| (s.to_string(), t0, t1);
+        let caps = chunk(vec![
+            w("مرحبا", 0.0, 300.0),
+            w("بكم؟", 320.0, 620.0),
+            w("أهلاً", 660.0, 900.0),
+            w("وسهلاً،", 930.0, 1200.0),
+            w("صديقي", 1230.0, 1500.0),
+        ]);
+        // the question mark closes the first line, the Arabic comma the second
+        assert_eq!(caps.len(), 3);
+        assert_eq!(caps[0].text, "مرحبا بكم؟");
+        assert_eq!(caps[1].text, "أهلاً وسهلاً،");
+        assert_eq!(caps[2].text, "صديقي");
     }
 }
