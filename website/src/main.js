@@ -1,5 +1,4 @@
 import './style.css';
-import { STRINGS, LANGS, detect } from './i18n.js';
 
 const nav = document.getElementById('nav');
 const onScroll = () => nav?.classList.toggle('scrolled', scrollY > 8);
@@ -33,31 +32,11 @@ document.querySelectorAll('.theme-btn').forEach((b) => b.addEventListener('click
   store.set('sc-theme', next);
 }));
 
-// language
+// the download buttons name the visitor's system
 const isMac = !/Windows/i.test(navigator.userAgent);
-function applyLang(lang) {
-  const dict = { ...STRINGS.en, ...(STRINGS[lang] || {}) };
-  root.lang = lang === 'zh-CN' ? 'zh-Hans' : lang === 'zh-TW' ? 'zh-Hant' : lang;
-  document.querySelectorAll('[data-i18n]').forEach((el) => {
-    const v = dict[el.dataset.i18n];
-    if (v != null) el.innerHTML = v;
-  });
-  wrapWords(document.querySelector('.hero h1'));
-  translatePage(lang).then(wrapKeys);
-  document.querySelectorAll('[data-i18n-os]').forEach((el) => {
-    el.textContent = dict[isMac ? 'dl.mac' : 'dl.win'];
-  });
-  document.querySelectorAll('[data-lang-select]').forEach((sel) => {
-    sel.value = lang;
-    // size the select to the chosen language so the caret sits right beside the text
-    const probe = document.createElement('span');
-    probe.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap;font:500 15px var(--font)';
-    probe.textContent = sel.options[sel.selectedIndex].text;
-    document.body.append(probe);
-    sel.style.width = Math.ceil(probe.getBoundingClientRect().width) + 22 + 'px';
-    probe.remove();
-  });
-}
+document.querySelectorAll('[data-i18n-os]').forEach((el) => {
+  el.textContent = isMac ? 'Download for macOS' : 'Download for Windows';
+});
 // split the headline into words so each can rise in turn (per character for CJK, which has no spaces)
 function wrapWords(h) {
   if (!h || reduceMotion) return;
@@ -79,34 +58,9 @@ function wrapWords(h) {
   }
 }
 
-// longer page text (new sections, features, docs) is translated by exact English text, from a
-// per-language file that is only fetched when that language is chosen
-const loaders = import.meta.glob('./lang/*.json');
-const dicts = {};
-const PAGE_SEL = 'main h1, main h2, main h3, main h4, main p, main li, main dt, main dd, main th, main td, main summary, .docs-nav a, .docs-nav h5';
-const keyOf = (el) => el.innerHTML.replace(/\s+/g, ' ').trim();
-async function translatePage(l) {
-  let dict = null;
-  if (l !== 'en') {
-    const load = loaders[`./lang/${l}.json`];
-    if (load) dict = dicts[l] ||= (await load()).default;
-  }
-  document.querySelectorAll(PAGE_SEL).forEach((el) => {
-    if (el.dataset.i18n || el.closest('[data-i18n]') || el.closest('.whatsnew') || el.closest('pre')) return;
-    if (el.dataset.en == null) {
-      const k = keyOf(el);
-      if (!dict || !(k in dict)) return;
-      el.dataset.en = k;
-    }
-    const en = el.dataset.en;
-    el.innerHTML = dict && en in dict ? dict[en] : en;
-  });
-}
-
 // the key list's description may hold inline <kbd>, so group it into one grid cell
 function wrapKeys() {
   document.querySelectorAll('.keys li').forEach((li) => {
-    if (li.dataset.en == null) li.dataset.en = keyOf(li);   // remember the English text before wrapping
     const first = li.firstElementChild;
     if (!first || li.querySelector(':scope > .d')) return;
     const d = document.createElement('span');
@@ -116,14 +70,8 @@ function wrapKeys() {
   });
 }
 
-const saved = store.get('sc-lang');
-let lang = LANGS.includes(saved) ? saved : detect();
-document.querySelectorAll('[data-lang-select]').forEach((sel) => sel.addEventListener('change', () => {
-  lang = sel.value;
-  store.set('sc-lang', lang);
-  applyLang(lang);
-}));
-applyLang(lang);
+wrapWords(document.querySelector('.hero h1'));
+wrapKeys();
 
 // the hero button downloads the installer for the visitor's system
 document.querySelectorAll('[data-os-cta]').forEach((a) => {
