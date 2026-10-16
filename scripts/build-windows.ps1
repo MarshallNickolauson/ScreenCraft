@@ -39,6 +39,9 @@ if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
     else { throw "cmake not found - install it first (winget install Kitware.CMake), then open a new PowerShell" }
 }
 
+# CMake 4 dropped support for projects that declare an old minimum version (libopus does).
+$env:CMAKE_POLICY_VERSION_MINIMUM = "3.5"
+
 cargo build --release -p screencraft
 if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
 
