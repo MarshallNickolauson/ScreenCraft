@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roadmap | ScreenCraft</title>
+<meta name="description" content="What is coming next to ScreenCraft.">
+<link rel="icon" href="/img/icon.png">
+<script src="/theme.js"></script>
+</head>
+<body>
+<!--@header-->
+<main id="main">
+<div class="wrap"><article class="prose solo roadmap">
+<h1>Roadmap</h1>
+<p class="lead">What we plan to build next. Nothing here is a promise or a date; it is the list we are working through, roughly in order. Follow progress in the <a href="/changelog">changelog</a> or on <a href="https://github.com/MarshallNickolauson/ScreenCraft/issues" target="_blank" rel="noopener noreferrer">GitHub</a>.</p>
+
+<h2>Next</h2>
+<ul class="rm">
+<li><b>Windows polish.</b> <span class="tag">Platform</span> Test and harden the Windows build end to end: capture, audio, the Media Foundation H.264 path, camera and the installer.</li>
+<li><b>Linux recording and editing.</b> <span class="tag">Platform</span> Linux has no operating-system H.264, so recordings cannot be edited there yet. We are designing a path that stays free of bundled H.264 code.</li>
+<li><b>HEVC export.</b> <span class="tag">Export</span> Bring back HEVC for exports and the compressor, through the operating system's own encoders.</li>
+<li><b>AAC audio in older projects.</b> <span class="tag">Projects</span> Open the AAC audio in 0.3 recordings and in compressor inputs.</li>
+</ul>
+
+<h2>Recording</h2>
+<ul class="rm">
+<li><b>Menu-bar and tray icon.</b> Start, stop and see elapsed time without the floating bar.</li>
+<li><b>Live system-audio meter</b> before you press record.</li>
+<li><b>Bluetooth headphone guard.</b> Keep headphones in stereo while the microphone is on, as 0.3 did.</li>
+<li><b>Recording HUD placed beside the area</b> you are capturing.</li>
+</ul>
+
+<h2>Editing</h2>
+<ul class="rm">
+<li><b>More device frames</b> and finer control over their colour and bezels.</li>
+<li><b>Caption styles.</b> More presets, per-word animation and caption translation on your own machine.</li>
+<li><b>Smarter auto-zoom.</b> Better detection of what you are working on, with easy manual correction.</li>
+<li><b>Cursor styles.</b> A wider set of pointers and click effects.</li>
+<li><b>Undo history panel</b> to step back through any edit.</li>
+</ul>
+
+<h2>Export</h2>
+<ul class="rm">
+<li><b>Export presets</b> for common destinations: social, slides and docs.</li>
+<li><b>Batch export</b> of several projects in one go.</li>
+<li><b>Faster rendering</b> through further GPU work in the compositor.</li>
+</ul>
+
+<h2>Distribution</h2>
+<ul class="rm">
+<li><b>Signed and notarized builds</b> so macOS and Windows stop warning on first launch.</li>
+<li><b>Linux packages</b> (AppImage and Flatpak) once editing works there.</li>
+</ul>
+
+<p class="fine">Missing something you need? <a href="https://github.com/MarshallNickolauson/ScreenCraft/issues" target="_blank" rel="noopener noreferrer">Open an issue</a> and tell us.</p>
+</article></div>
+</main>
+<!--@footer-->
+</body>
+</html>
