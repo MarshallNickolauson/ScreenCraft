@@ -204,7 +204,7 @@ impl MfH264Decoder {
     pub fn new(params: &[Vec<u8>], length_size: usize) -> Result<Self> {
         init()?;
         unsafe {
-            let mft: IMFTransform = CoCreateInstance(&CLSID_CMSH264DecoderMFT, None, CLSCTX_INPROC_SERVER).map_err(|e| err("no H.264 decoder", e))?;
+            let mft: IMFTransform = CoCreateInstance(&CLSID_MSH264DecoderMFT, None, CLSCTX_INPROC_SERVER).map_err(|e| err("no H.264 decoder", e))?;
             let in_t = MFCreateMediaType().map_err(|e| err("decoder type", e))?;
             in_t.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video).map_err(|e| err("decoder type", e))?;
             in_t.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_H264).map_err(|e| err("decoder type", e))?;
