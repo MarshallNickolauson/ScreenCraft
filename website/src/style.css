@@ -672,3 +672,6 @@ main { counter-reset: sec; }
   .docs, .osrow, .prose .grid2 { grid-template-columns: minmax(0, 1fr); }
   .docs { gap: 24px; }
 }
+/* navbar cells fill the strip's height (older fixed heights left them off-centre) */
+.nav-in > a, .nav-in > button { height: auto; align-self: stretch; margin: 0; }
+.nav-in > .gh-btn, .nav-in > .support-btn { height: auto; }
