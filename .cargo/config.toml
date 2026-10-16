@@ -5,3 +5,7 @@ rustflags = ["-C", "link-arg=-Wl,-rpath,/usr/lib/swift"]
 
 [target.x86_64-apple-darwin]
 rustflags = ["-C", "link-arg=-Wl,-rpath,/usr/lib/swift"]
+
+# CMake 4 refuses projects that declare an old minimum version (libopus, whisper.cpp deps).
+[env]
+CMAKE_POLICY_VERSION_MINIMUM = "3.5"
