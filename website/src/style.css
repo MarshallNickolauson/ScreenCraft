@@ -543,3 +543,9 @@ html { overflow-x: clip; }
 .rm li { padding: 14px 0; border-bottom: 1px solid var(--line); color: var(--muted); }
 .rm li b { color: var(--text); }
 .rm .tag { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 8px; margin: 0 6px 0 2px; border-radius: 999px; background: var(--bg-2); color: var(--accent-text); vertical-align: 1px; }
+
+/* back to the main mdnlabs.dev site */
+.back { display: inline-flex; align-items: center; gap: 4px; height: 34px; padding: 0 10px 0 6px; margin-right: 4px; border: 1px solid var(--line-2); border-radius: 8px; color: var(--muted); font-size: 14px; font-weight: 550; white-space: nowrap; }
+.back:hover { color: var(--text); background: var(--bg-2); text-decoration: none; }
+@media (max-width: 520px) { .back span { display: none; } .back { width: 34px; padding: 0; justify-content: center; margin-right: 0; } .nav-in { gap: 10px; } }
+@media (max-width: 440px) { .brand span { display: none; } }
