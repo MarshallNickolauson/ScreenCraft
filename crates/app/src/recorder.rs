@@ -189,6 +189,8 @@ pub struct Recorder {
     pub window_title: String,
     /// The picked area in global logical points.
     pub area: Option<PRect>,
+    /// True while an editor window is open and the bar is parked out of sight.
+    pub parked: bool,
     pub permissions: Permissions,
     perms_at: Option<Instant>,
     pub phase: Phase,
@@ -228,6 +230,7 @@ impl Recorder {
             window: None,
             window_title: String::new(),
             area: None,
+            parked: false,
             permissions: Permissions::default(),
             perms_at: None,
             phase: Phase::Idle,
@@ -310,7 +313,7 @@ impl Recorder {
                 self.error = None;
             }
         }
-        self.live.sync(prefs, self.phase);
+        self.live.sync(prefs, self.phase, self.parked);
         if let Some(e) = self.live.take_error() {
             self.show_error(e);
         }
@@ -548,6 +551,15 @@ impl Recorder {
         painter.rect_filled(bar.expand(1.0).translate(Vec2::new(0.0, 6.0)), CornerRadius::same(16), Color32::from_black_alpha(36));
         painter.rect_filled(bar, CornerRadius::same(14), Color32::from_rgba_unmultiplied(11, 16, 26, 245));
         painter.rect_stroke(bar, CornerRadius::same(14), Stroke::new(1.0, LINE_2), StrokeKind::Inside);
+
+        // drag the bar anywhere you like by its background (the buttons drawn after this sit on top)
+        let grab = ui.interact(bar, ui.id().with("bar-drag"), Sense::drag());
+        if grab.drag_started() {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
+        if grab.hovered() && self.menu.is_none() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+        }
 
         match self.phase {
             Phase::Idle | Phase::Starting => {

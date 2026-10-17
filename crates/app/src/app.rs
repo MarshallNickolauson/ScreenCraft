@@ -446,6 +446,7 @@ impl App {
     pub fn draw(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         self.dev_screenshot(&ctx);
+        self.rec.parked = !self.editors.is_empty();
         self.rec.refresh(&self.prefs);
         if let Some(secs) = self.autorecord {
             match self.rec.phase {
@@ -593,6 +594,22 @@ impl App {
         }
         let outline: Option<(PRect, &'static str)> = match (self.rec.phase, self.rec.mode, self.rec.area, &self.hover_window) {
             (Phase::Recording | Phase::Countdown | Phase::Starting | Phase::Confirm, Mode::Area, Some(a), _) => Some((a, "rec")),
+            // a window or a whole display: outline it too, so it is clear what is being recorded
+            // (the app's own windows are excluded from the capture, so this never appears in it)
+            (Phase::Recording | Phase::Countdown | Phase::Starting | Phase::Confirm, Mode::Window, _, _) => self
+                .rec
+                .window
+                .and_then(|id| self.rec.windows().iter().find(|w| w.id == id))
+                .map(|w| (PRect { x: w.x, y: w.y, width: w.width, height: w.height }, "rec")),
+            (Phase::Recording | Phase::Countdown | Phase::Starting | Phase::Confirm, Mode::Display, _, _) => {
+                let ds = self.rec.displays();
+                self.rec
+                    .display
+                    .and_then(|id| ds.iter().find(|d| d.id == id))
+                    .or_else(|| ds.iter().find(|d| d.is_main))
+                    .or(ds.first())
+                    .map(|d| (PRect { x: d.x, y: d.y, width: d.width, height: d.height }, "rec"))
+            }
             (Phase::Idle, _, _, Some(w)) => Some((PRect { x: w.x, y: w.y, width: w.width, height: w.height }, "hl")),
             (Phase::Idle, Mode::Area, Some(a), _) if self.area_picker.is_none() => Some((a, "sel")),
             _ => None,

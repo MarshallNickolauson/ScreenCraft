@@ -6,6 +6,7 @@ use crate::recorder::Phase;
 use eframe::egui;
 use screencraft_audio::{AudioBlock, AudioCapture, CaptureConfig, Clock};
 use screencraft_capture::camera::{CamFrame, CameraHub, CameraStream};
+use screencraft_capture::{create_capturer, CaptureRequest, Capturer, Event, Target};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -33,6 +34,13 @@ pub struct Live {
     mic_starting: Arc<AtomicBool>,
     mic_slot: Arc<Mutex<Option<Result<Started<AudioCapture>, String>>>>,
     mic_level: Arc<AtomicU32>,
+    /// Level meter for the computer's own audio: a tiny capture that only listens.
+    sys: Option<Box<dyn Capturer>>,
+    sys_starting: Arc<AtomicBool>,
+    sys_slot: Arc<Mutex<Option<Result<Box<dyn Capturer>, String>>>>,
+    sys_level: Arc<AtomicU32>,
+    /// The meter could not start; do not retry until the input is switched off and on again.
+    sys_failed: bool,
     error: Arc<Mutex<Option<String>>>,
 }
 
@@ -56,6 +64,11 @@ impl Live {
             mic_starting: Arc::new(AtomicBool::new(false)),
             mic_slot: Arc::new(Mutex::new(None)),
             mic_level: Arc::new(AtomicU32::new(0)),
+            sys: None,
+            sys_starting: Arc::new(AtomicBool::new(false)),
+            sys_slot: Arc::new(Mutex::new(None)),
+            sys_level: Arc::new(AtomicU32::new(0)),
+            sys_failed: false,
             error: Arc::new(Mutex::new(None)),
         }
     }
@@ -81,11 +94,11 @@ impl Live {
     }
 
     pub fn levels(&self) -> (f32, f32) {
-        (f32::from_bits(self.mic_level.load(Ordering::Relaxed)), 0.0)
+        (f32::from_bits(self.mic_level.load(Ordering::Relaxed)), f32::from_bits(self.sys_level.load(Ordering::Relaxed)))
     }
 
     /// Start or stop the camera and microphone meter so they match `prefs` and the phase.
-    pub fn sync(&mut self, prefs: &Prefs, phase: Phase) {
+    pub fn sync(&mut self, prefs: &Prefs, phase: Phase, parked: bool) {
         // finished background starts
         if let Some(r) = self.camera_slot.lock().unwrap().take() {
             match r {
@@ -97,6 +110,13 @@ impl Live {
             match r {
                 Ok(s) => self.mic = Some(s),
                 Err(e) => *self.error.lock().unwrap() = Some(e),
+            }
+        }
+        if let Some(r) = self.sys_slot.lock().unwrap().take() {
+            // a meter that cannot start (no permission yet, say) just stays at zero
+            match r {
+                Ok(c) => self.sys = Some(c),
+                Err(_) => self.sys_failed = true,
             }
         }
         let in_use = matches!(phase, Phase::Idle | Phase::Countdown | Phase::Recording | Phase::Confirm | Phase::Starting);
@@ -154,6 +174,49 @@ impl Live {
                         }
                     });
                 }
+                *slot.lock().unwrap() = Some(r);
+                flag.store(false, Ordering::SeqCst);
+                ctx.request_repaint();
+            });
+        }
+        // system-audio meter: only while the bar is showing and the input is on
+        let want_sys = prefs.system_audio && phase == Phase::Idle && !parked;
+        if !want_sys {
+            self.sys_failed = false;
+            if let Some(mut c) = self.sys.take() {
+                c.stop();
+                self.sys_level.store(0, Ordering::Relaxed);
+            }
+        }
+        if want_sys && self.sys.is_none() && !self.sys_failed && !self.sys_starting.swap(true, Ordering::SeqCst) {
+            let (slot, flag, level, ctx) = (self.sys_slot.clone(), self.sys_starting.clone(), self.sys_level.clone(), self.ctx.clone());
+            std::thread::spawn(move || {
+                let (tx, rx) = std::sync::mpsc::sync_channel::<Event>(4);
+                let mut cap = create_capturer();
+                let req = CaptureRequest { target: Target::Display(None), fps: 5, max_long_side: Some(64), system_audio: true };
+                let r = match cap.start(&req, Clock::start(), tx) {
+                    Ok(info) if info.provides_system_audio => {
+                        let ctx2 = ctx.clone();
+                        std::thread::spawn(move || {
+                            while let Ok(ev) = rx.recv() {
+                                match ev {
+                                    Event::SystemAudio(b) => {
+                                        set_peak(&level, screencraft_audio::mix::peak(&b.data));
+                                        ctx2.request_repaint_after(std::time::Duration::from_millis(40));
+                                    }
+                                    Event::Frame(_) => {}
+                                    Event::Ended(_) => break,
+                                }
+                            }
+                        });
+                        Ok(cap)
+                    }
+                    Ok(_) => {
+                        cap.stop();
+                        Err("no system-audio meter on this platform".to_string())
+                    }
+                    Err(e) => Err(e),
+                };
                 *slot.lock().unwrap() = Some(r);
                 flag.store(false, Ordering::SeqCst);
                 ctx.request_repaint();
