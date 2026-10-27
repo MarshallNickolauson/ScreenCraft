@@ -94,6 +94,9 @@ pub struct Slice {
     pub freeze: bool,
     /// One step of a speed ramp. The editor shows consecutive ramp pieces as one block.
     pub ramp: bool,
+    /// A jump cut: the stretch stays on the timeline (greyed out) but is skipped in playback
+    /// and left out of the export. Turn it back on to bring it back.
+    pub disabled: bool,
     /// Transition played across the cut between the previous slice and this one.
     pub transition: Option<Transition>,
 }
@@ -110,6 +113,7 @@ impl Default for Slice {
             disable_smooth_mouse: false,
             freeze: false,
             ramp: false,
+            disabled: false,
             transition: None,
         }
     }
@@ -731,6 +735,21 @@ impl Default for Project {
 
 impl Project {
     /// A fresh project covering the whole recording with no cuts.
+    /// The project as it plays and exports: jump-cut (disabled) stretches removed and the
+    /// output-time music placement moved to match. Without jump cuts this is a plain clone.
+    pub fn effective(&self) -> Project {
+        let src = &self.scene.slices;
+        if !src.iter().any(|s| s.disabled) {
+            return self.clone();
+        }
+        let mut p = self.clone();
+        for c in &mut p.scene.music_clips {
+            c.offset_ms = crate::timeline::display_to_effective(src, c.offset_ms);
+        }
+        p.scene.slices = crate::timeline::enabled(src);
+        p
+    }
+
     pub fn from_recording(name: &str, media: Media) -> Self {
         let slice = Slice {
             id: "slice-0".into(),

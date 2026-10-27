@@ -16,7 +16,7 @@ use crate::theme::{self, *};
 use eframe::egui::{self, Align2, Color32, CornerRadius, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2};
 use screencraft_core::input::InputLog;
 use screencraft_core::project::Project;
-use screencraft_core::timeline::output_to_source;
+use screencraft_core::timeline::{display_to_effective, effective_duration_ms, effective_to_display, output_to_source};
 use screencraft_core::track::{compute_track, RenderTrack};
 use screencraft_engine::{build_soundtrack, FrameTable, Package};
 use screencraft_render::{build_scene, output_size, Compositor, Slot};
@@ -125,6 +125,8 @@ pub struct EditorState {
     pub input: InputLog,
     track: RenderTrack,
     track_dirty: bool,
+    /// The track of what plays (jump cuts left out), for the sound effects under the soundtrack.
+    eff_track: Option<RenderTrack>,
     undo: Vec<Project>,
     redo: Vec<Project>,
     last_undo_push: Instant,
@@ -225,6 +227,7 @@ impl EditorState {
             input,
             track: RenderTrack::default(),
             track_dirty: true,
+            eff_track: None,
             undo: Vec::new(),
             redo: Vec::new(),
             last_undo_push: Instant::now() - Duration::from_secs(10),
@@ -284,6 +287,18 @@ impl EditorState {
         let Some(w) = what else { return };
         if w == "auto-zoom" {
             self.auto_zoom();
+        } else if w == "jump-cuts" || w == "jump-cuts-zoom" {
+            if w == "jump-cuts-zoom" {
+                self.panel.pace.jc_silence = 0.25;
+                self.panel.pace.jc_sens = 0.9;
+            }
+            let o = &self.panel.pace;
+            let settings = screencraft_core::jumpcut::JumpCutSettings { min_silence_ms: o.jc_silence * 1000.0, padding_ms: o.jc_padding * 1000.0, sensitivity: o.jc_sens };
+            self.panel.pace.jc_status = match self.auto_jump_cuts(settings) {
+                Ok((n, ms)) => format!("{n} jump cuts found, {:.1} s removed from the final video.", ms / 1000.0),
+                Err(e) => e,
+            };
+            self.tab = Tab::Pace;
         } else if let Some(n) = w.strip_prefix("zoom:").and_then(|n| n.parse::<usize>().ok()) {
             if let Some(z) = self.project.scene.zooms.get(n) {
                 self.sel = Sel::Zoom(z.id.clone());
@@ -354,6 +369,7 @@ impl EditorState {
     /// Mark the project edited by the UI: recompute the track and schedule a save.
     fn changed(&mut self) {
         self.track_dirty = true;
+        self.eff_track = None;
         self.dirty = true;
         self.dirty_since = Some(Instant::now());
         if self.playing {
@@ -411,29 +427,55 @@ impl EditorState {
         self.dirty = false;
     }
 
+    /// Length of what plays: the timeline without its jump cuts.
+    pub fn play_duration_ms(&self) -> f64 {
+        effective_duration_ms(&self.project.scene.slices)
+    }
+
+    /// Timeline position -> play position (jump cuts skipped), and back.
+    fn to_play(&self, t: f64) -> f64 {
+        display_to_effective(&self.project.scene.slices, t)
+    }
+
+    fn to_timeline(&self, t: f64) -> f64 {
+        effective_to_display(&self.project.scene.slices, t)
+    }
+
     fn restart_audio(&mut self) {
         self.ensure_track();
         self.audio_clock = false;
-        if let Some(a) = self.audio.as_mut() {
-            a.stop();
+        if self.audio.is_some() {
+            if let Some(a) = self.audio.as_mut() {
+                a.stop();
+            }
             if self.playing {
-                if let Ok(Some(st)) = build_soundtrack(&self.package, &self.project, &self.track) {
-                    a.play(st, self.playhead_ms);
-                    self.audio_clock = self.rate == 1.0;
+                // the soundtrack is that of the project without its jump cuts
+                let eff = self.project.effective();
+                let has_cuts = eff.scene.slices.len() != self.project.scene.slices.len();
+                if has_cuts && self.eff_track.is_none() {
+                    self.eff_track = Some(compute_track(&eff, &self.input, TRACK_FPS));
+                }
+                let track = if has_cuts { self.eff_track.as_ref().unwrap_or(&self.track) } else { &self.track };
+                let start = self.to_play(self.playhead_ms);
+                if let Ok(Some(st)) = build_soundtrack(&self.package, &eff, track) {
+                    if let Some(a) = self.audio.as_mut() {
+                        a.play(st, start);
+                        self.audio_clock = self.rate == 1.0;
+                    }
                 }
             }
         }
     }
 
     pub fn play(&mut self) {
-        if self.duration_ms() <= 0.0 {
+        if self.play_duration_ms() <= 0.0 {
             return;
         }
         if self.playhead_ms >= self.duration_ms() - 1.0 {
             self.playhead_ms = 0.0;
         }
         self.playing = true;
-        self.play_anchor = Some((Instant::now(), self.playhead_ms));
+        self.play_anchor = Some((Instant::now(), self.to_play(self.playhead_ms)));
         if self.audio.is_none() {
             self.audio = AudioPlayback::new();
         }
@@ -457,7 +499,7 @@ impl EditorState {
     pub fn seek(&mut self, t_ms: f64) {
         self.playhead_ms = t_ms.clamp(0.0, self.duration_ms());
         if self.playing {
-            self.play_anchor = Some((Instant::now(), self.playhead_ms));
+            self.play_anchor = Some((Instant::now(), self.to_play(self.playhead_ms)));
             self.restart_audio();
         }
     }
@@ -482,12 +524,12 @@ impl EditorState {
                     (Some(a), true) => p0 + a.position_ms(),
                     _ => p0 + t0.elapsed().as_secs_f64() * 1000.0 * self.rate,
                 };
-                let d = self.duration_ms();
-                if t >= d {
-                    self.playhead_ms = d;
+                // `t` counts play time (jump cuts skipped); the playhead sits on the timeline
+                if t >= self.play_duration_ms() {
+                    self.playhead_ms = self.duration_ms();
                     self.pause();
                 } else {
-                    self.playhead_ms = t;
+                    self.playhead_ms = self.to_timeline(t);
                 }
             }
             ctx.request_repaint();
@@ -895,13 +937,13 @@ impl EditorState {
                 if self.playing {
                     self.rate = 2.0;
                     self.audio_clock = false;
-                    self.play_anchor = Some((Instant::now(), self.playhead_ms));
+                    self.play_anchor = Some((Instant::now(), self.to_play(self.playhead_ms)));
                 }
             }
             if space_up {
                 if self.panel.space_held {
                     self.rate = 1.0;
-                    self.play_anchor = Some((Instant::now(), self.playhead_ms));
+                    self.play_anchor = Some((Instant::now(), self.to_play(self.playhead_ms)));
                     if !self.panel.space_was_playing {
                         self.pause();
                     }
@@ -917,6 +959,9 @@ impl EditorState {
         }
         if k(egui::Key::S) && !cmd {
             self.split_at_playhead();
+        }
+        if k(egui::Key::X) && !cmd {
+            self.toggle_jump_cut();
         }
         if k(egui::Key::Z) {
             self.add_zoom_at_playhead();

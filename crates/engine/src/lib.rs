@@ -8,6 +8,7 @@ pub mod camera_rec;
 pub mod compress;
 pub mod export;
 pub mod gif;
+pub mod jumpcuts;
 pub mod package;
 pub mod recorder;
 pub mod sfx;

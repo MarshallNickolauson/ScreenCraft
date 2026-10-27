@@ -141,6 +141,16 @@ fn tools(st: &mut EditorState, ui: &mut egui::Ui) {
             if kit::pill(ui, None, "Auto zooms", false, true, false, None).on_hover_text("Regenerate zooms from clicks").clicked() {
                 st.auto_zoom();
             }
+            if kit::pill(ui, None, "Auto jump cuts", false, true, false, None).on_hover_text("Switch off the pauses in your speech (they stay on the timeline, greyed out). X toggles the selected clip.").clicked() {
+                let o = &st.panel.pace;
+                let settings = screencraft_core::jumpcut::JumpCutSettings { min_silence_ms: o.jc_silence * 1000.0, padding_ms: o.jc_padding * 1000.0, sensitivity: o.jc_sens };
+                st.panel.pace.jc_status = match st.auto_jump_cuts(settings) {
+                    Ok((0, _)) => "No pauses that long. Try a shorter silence or a higher sensitivity.".into(),
+                    Ok((n, ms)) => format!("{n} jump cut{} found, {:.1} s removed from the final video.", if n == 1 { "" } else { "s" }, ms / 1000.0),
+                    Err(e) => e,
+                };
+                st.tab = Tab::Pace;
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // Speed of the selected clip
                 let speeds = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0, 8.0];
@@ -250,18 +260,18 @@ fn body(st: &mut EditorState, ui: &mut egui::Ui) {
             b: acc + len,
             track: 0,
             lane: 0,
-            label: if sped { String::new() } else if s.freeze { "Freeze".into() } else { "Clip".into() },
-            sub: if sped { None } else { Some(format!("{:.1}s", len / 1000.0)) },
+            label: if s.disabled { "Jump cut".into() } else if sped { String::new() } else if s.freeze { "Freeze".into() } else { "Clip".into() },
+            sub: if sped && !s.disabled { None } else { Some(format!("{:.1}s", len / 1000.0)) },
             sel: matches!(&sel_id, Sel::Slice(id) if id == &s.id),
             color: CLIP,
-            text: Color32::from_rgb(0x2d, 0x14, 0x05),
-            disabled: false,
-            pill: if sped { Some(x_text(s.time_scale)) } else { None },
+            text: if s.disabled { Color32::from_rgb(0xa9, 0xb4, 0xc8) } else { Color32::from_rgb(0x2d, 0x14, 0x05) },
+            disabled: s.disabled,
+            pill: if sped && !s.disabled { Some(x_text(s.time_scale)) } else { None },
             freeze: s.freeze,
             index: si,
                 wave: None,
         });
-        if si > 0 {
+        if si > 0 && !s.disabled && !slices[si - 1].disabled {
             markers.push((acc, si));
         }
         acc += len;
@@ -925,12 +935,13 @@ fn paint_block(ui: &egui::Ui, p: &egui::Painter, b: &Block, r: Rect, dragging: b
         p.rect_filled(r.translate(Vec2::new(0.0, 8.0)).expand(2.0), CornerRadius::same(8), Color32::from_black_alpha(90));
         fill = alpha(fill, 0.88);
     }
-    if b.freeze || b.kind == Kind::Ramp {
+    let jump = b.kind == Kind::Clip && b.disabled;
+    if b.freeze || b.kind == Kind::Ramp || jump {
         // diagonal hatch
-        let (c0, c1) = if b.freeze { (Color32::from_rgb(0x5d, 0x6b, 0x82), Color32::from_rgb(0x4f, 0x5c, 0x72)) } else { (Color32::from_rgb(0xc9, 0x8a, 0x63), Color32::from_rgb(0xbe, 0x7d, 0x57)) };
+        let (c0, c1) = if jump { (Color32::from_rgb(0x24, 0x2c, 0x3b), Color32::from_rgb(0x2c, 0x35, 0x46)) } else if b.freeze { (Color32::from_rgb(0x5d, 0x6b, 0x82), Color32::from_rgb(0x4f, 0x5c, 0x72)) } else { (Color32::from_rgb(0xc9, 0x8a, 0x63), Color32::from_rgb(0xbe, 0x7d, 0x57)) };
         p.rect_filled(r, cr, c0);
         let clipped = p.with_clip_rect(r);
-        let step = if b.freeze { 16.0 } else { 20.0 };
+        let step = if b.freeze || jump { 16.0 } else { 20.0 };
         let mut x = r.min.x - r.height();
         while x < r.max.x {
             clipped.add(Shape::convex_polygon(
@@ -952,7 +963,7 @@ fn paint_block(ui: &egui::Ui, p: &egui::Painter, b: &Block, r: Rect, dragging: b
             let hr = Rect::from_min_max(Pos2::new(r.max.x - HANDLE_W, r.min.y), r.max);
             clip.rect_filled(hl, CornerRadius { nw: 6, sw: 6, ne: 0, se: 0 }, Color32::from_black_alpha(56));
             clip.rect_filled(hr, CornerRadius { nw: 0, sw: 0, ne: 6, se: 6 }, Color32::from_black_alpha(56));
-            let bar = if b.kind == Kind::Clip { Color32::from_rgb(0x2d, 0x14, 0x05) } else if b.kind == Kind::Music { Color32::from_rgb(0x0b, 0x3a, 0x28) } else { Color32::from_white_alpha(235) };
+            let bar = if jump { Color32::from_rgb(0x7d, 0x8a, 0xa3) } else if b.kind == Kind::Clip { Color32::from_rgb(0x2d, 0x14, 0x05) } else if b.kind == Kind::Music { Color32::from_rgb(0x0b, 0x3a, 0x28) } else { Color32::from_white_alpha(235) };
             for h in [hl, hr] {
                 clip.rect_filled(Rect::from_center_size(h.center(), Vec2::new(2.0, 14.0)), CornerRadius::same(2), bar);
             }
@@ -991,7 +1002,7 @@ fn paint_block(ui: &egui::Ui, p: &egui::Painter, b: &Block, r: Rect, dragging: b
             ic.text(Pos2::new(lr.min.x + 6.0, lr.center().y), Align2::LEFT_CENTER, mname, kit::font(11.0), Color32::WHITE);
         } else if let Some(sub) = &b.sub {
             ic.text(Pos2::new(cx, r.center().y - 7.0), Align2::CENTER_CENTER, &b.label, kit::font(12.0), b.text);
-            let sc = if b.kind == Kind::Clip { Color32::from_rgba_unmultiplied(45, 20, 5, 178) } else { alpha(b.text, 0.85) };
+            let sc = if jump { Color32::from_rgb(0x7d, 0x8a, 0xa3) } else if b.kind == Kind::Clip { Color32::from_rgba_unmultiplied(45, 20, 5, 178) } else { alpha(b.text, 0.85) };
             ic.text(Pos2::new(cx, r.center().y + 8.0), Align2::CENTER_CENTER, sub, kit::font(11.0), sc);
         } else {
             let size = if matches!(b.kind, Kind::Annot) { 11.5 } else { 12.0 };
@@ -1133,9 +1144,28 @@ fn commit(st: &mut EditorState, kind: Kind, id: &str, mode: Mode, group: bool, a
                         (s.source_start_ms, s.source_start_ms + (pv.b - a0) * scale)
                     };
                     st.edit(|p| {
-                        if let Some(x) = p.scene.slices.iter_mut().find(|x| x.id == id) {
-                            x.source_start_ms = ns.clamp(0.0, ne - 200.0);
-                            x.source_end_ms = ne.clamp(x.source_start_ms + 200.0, dur);
+                        let Some(i) = p.scene.slices.iter().position(|x| x.id == id) else { return };
+                        let (old_s, old_e, dis) = (p.scene.slices[i].source_start_ms, p.scene.slices[i].source_end_ms, p.scene.slices[i].disabled);
+                        // a jump cut's edge is shared with the clip beside it: that clip gives or takes the time
+                        let joined = |o: &Slice, edge: f64, at_end: bool| (if at_end { o.source_end_ms } else { o.source_start_ms } - edge).abs() < 1.0 && o.disabled != dis && !o.freeze;
+                        let (mut ns, mut ne) = (ns, ne);
+                        let prev_joined = mode == Mode::Left && i > 0 && joined(&p.scene.slices[i - 1], old_s, true);
+                        let next_joined = mode == Mode::Right && i + 1 < p.scene.slices.len() && joined(&p.scene.slices[i + 1], old_e, false);
+                        if prev_joined {
+                            ns = ns.max(p.scene.slices[i - 1].source_start_ms + 40.0);
+                        }
+                        if next_joined {
+                            ne = ne.min(p.scene.slices[i + 1].source_end_ms - 40.0);
+                        }
+                        let x = &mut p.scene.slices[i];
+                        x.source_start_ms = ns.clamp(0.0, ne - 200.0);
+                        x.source_end_ms = ne.clamp(x.source_start_ms + 200.0, dur);
+                        let (new_s, new_e) = (x.source_start_ms, x.source_end_ms);
+                        if prev_joined {
+                            p.scene.slices[i - 1].source_end_ms = new_s;
+                        }
+                        if next_joined {
+                            p.scene.slices[i + 1].source_start_ms = new_e;
                         }
                     });
                 }

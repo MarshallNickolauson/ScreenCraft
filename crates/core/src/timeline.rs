@@ -50,6 +50,55 @@ pub fn source_to_output(slices: &[Slice], t_src: f64) -> Option<f64> {
     None
 }
 
+/// The slices that play: everything except jump cuts.
+pub fn enabled(slices: &[Slice]) -> Vec<Slice> {
+    slices.iter().filter(|s| !s.disabled).cloned().collect()
+}
+
+fn len_of(s: &Slice) -> f64 {
+    (s.source_end_ms - s.source_start_ms).max(0.0) / s.time_scale.max(1e-3)
+}
+
+/// Length of what plays (jump cuts left out).
+pub fn effective_duration_ms(slices: &[Slice]) -> f64 {
+    slices.iter().filter(|s| !s.disabled).map(len_of).sum()
+}
+
+/// Timeline time (jump cuts take up their length) to play time (jump cuts skipped).
+/// A time inside a jump cut maps to the moment playback resumes after it.
+pub fn display_to_effective(slices: &[Slice], t_disp: f64) -> f64 {
+    let (mut acc_disp, mut acc_eff) = (0.0, 0.0);
+    for s in slices {
+        let len = len_of(s);
+        if t_disp < acc_disp + len {
+            return if s.disabled { acc_eff } else { acc_eff + (t_disp - acc_disp) };
+        }
+        acc_disp += len;
+        if !s.disabled {
+            acc_eff += len;
+        }
+    }
+    acc_eff
+}
+
+/// Play time back to timeline time.
+pub fn effective_to_display(slices: &[Slice], t_eff: f64) -> f64 {
+    let (mut acc_disp, mut acc_eff) = (0.0, 0.0);
+    for s in slices {
+        let len = len_of(s);
+        if s.disabled {
+            acc_disp += len;
+            continue;
+        }
+        if t_eff < acc_eff + len {
+            return acc_disp + (t_eff - acc_eff);
+        }
+        acc_disp += len;
+        acc_eff += len;
+    }
+    acc_disp
+}
+
 /// Split the slice containing `t_src` in two. Returns false if `t_src` is not
 /// strictly inside a slice.
 pub fn split_at(slices: &mut Vec<Slice>, t_src: f64, new_id: String) -> bool {
@@ -84,6 +133,22 @@ mod tests {
         assert_eq!(output_to_source(&sl, 1250.0).unwrap().0, 2500.0);
         assert_eq!(source_to_output(&sl, 2500.0), Some(1250.0));
         assert_eq!(source_to_output(&sl, 1500.0), None);
+    }
+
+    #[test]
+    fn jump_cuts_are_skipped_in_play_time() {
+        let mut cut = s(1000.0, 2000.0, 1.0);
+        cut.disabled = true;
+        let sl = vec![s(0.0, 1000.0, 1.0), cut, s(2000.0, 4000.0, 1.0)];
+        assert_eq!(output_duration_ms(&sl), 4000.0);
+        assert_eq!(effective_duration_ms(&sl), 3000.0);
+        assert_eq!(display_to_effective(&sl, 500.0), 500.0);
+        assert_eq!(display_to_effective(&sl, 1500.0), 1000.0); // inside the cut: resumes after it
+        assert_eq!(display_to_effective(&sl, 3000.0), 2000.0);
+        assert_eq!(effective_to_display(&sl, 500.0), 500.0);
+        assert_eq!(effective_to_display(&sl, 1000.0), 2000.0);
+        assert_eq!(effective_to_display(&sl, 2500.0), 3500.0);
+        assert_eq!(enabled(&sl).len(), 2);
     }
 
     #[test]

@@ -164,7 +164,7 @@ pub fn show(st: &mut EditorState, ctx: &egui::Context) {
     let mut cancel = false;
     let mut close = false;
     let (w_src, h_src) = screencraft_render::output_size(&st.project, st.export.resolution);
-    let dur = st.duration_ms() / 1000.0;
+    let dur = st.play_duration_ms() / 1000.0;
     let has_audio = st.project.media.has_microphone || st.project.media.has_system_audio || st.project.media.mic.is_some() || !st.project.scene.music_clips.is_empty();
     let compress_ok = cfg!(any(target_os = "macos", target_os = "windows"));
 

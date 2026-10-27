@@ -1,6 +1,7 @@
 //! ScreenCraft core: everything about a recording that is not pixels.
 
 pub mod input;
+pub mod jumpcut;
 pub mod pace;
 pub mod project;
 pub mod spring;

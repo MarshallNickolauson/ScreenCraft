@@ -97,3 +97,33 @@ fn exports_mp4_and_webm_with_edits_applied() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn jump_cuts_are_left_out_of_the_export() {
+    if screencraft_render::Compositor::headless().is_err() {
+        eprintln!("skipping: no GPU");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("sc-jumpcut-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let (package, mut project) = record(&dir);
+    let full_ms = project.media.duration_ms;
+
+    // switch off the middle third; it stays on the timeline but must not be exported
+    let (a, b) = (full_ms / 3.0, full_ms * 2.0 / 3.0);
+    let mut n = 0;
+    screencraft_core::jumpcut::apply_jump_cuts(&mut project.scene.slices, &[[a, b]], || {
+        n += 1;
+        format!("jc-{n}")
+    });
+    assert_eq!(project.scene.slices.iter().filter(|s| s.disabled).count(), 1);
+    let expected_ms = full_ms - (b - a);
+
+    let mp4 = dir.join("out.mp4");
+    export_project(&package, &project, &opts(Container::Mp4, VideoCodec::H264), &mp4, |_| true).unwrap();
+    let f = Mp4File::open(&mp4).unwrap();
+    let got_ms = f.video().unwrap().samples.len() as f64 * 1000.0 / 30.0;
+    assert!((got_ms - expected_ms).abs() < 70.0, "duration {got_ms} vs {expected_ms}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

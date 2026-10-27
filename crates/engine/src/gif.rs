@@ -16,6 +16,8 @@ pub struct GifReport {
 
 pub fn export_gif(package: &Package, project: &Project, resolution: u32, out: &Path, mut progress: impl FnMut(f32) -> bool) -> Result<GifReport, String> {
     const FPS: u32 = 15;
+    let effective = project.effective();
+    let project = &effective;
     let res = resolution.clamp(144, 540);
     let (w, h) = output_size(project, res);
     let (w, h) = (w & !1, h & !1);

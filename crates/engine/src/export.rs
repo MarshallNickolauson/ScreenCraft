@@ -394,6 +394,9 @@ pub fn export_project(
     out: &Path,
     mut progress: impl FnMut(f32) -> bool,
 ) -> Result<ExportReport, String> {
+    // jump cuts (disabled stretches) are left out of the file
+    let effective = project.effective();
+    let project = &effective;
     if !opts.container.supports(opts.codec) {
         return Err(format!("{} can't be stored in .{}", opts.codec.name(), opts.container.extension()));
     }

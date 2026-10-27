@@ -19,6 +19,50 @@ impl EditorState {
         screencraft_core::pace::idle_segments(&self.input, dur, speech.as_deref(), min_idle_ms.max(500.0), 250.0)
     }
 
+    /// Find the silences in the speech and turn them into jump cuts: stretches that stay on the
+    /// timeline, greyed out, but are skipped when it plays and left out of the export. Replaces
+    /// any jump cuts made before. Returns how many were made and how long they run together.
+    pub fn auto_jump_cuts(&mut self, settings: screencraft_core::jumpcut::JumpCutSettings) -> Result<(usize, f64), String> {
+        use screencraft_core::jumpcut::{apply_jump_cuts, clear_jump_cuts, cut_total_ms, find_silences};
+        let levels = screencraft_engine::jumpcuts::audio_levels(&self.package, &self.project)?;
+        let ranges = find_silences(&levels, screencraft_engine::jumpcuts::FRAME_MS, &settings);
+        let mut ids: Vec<String> = (0..ranges.len() * 2 + 2).map(|_| self.new_id("slice")).collect();
+        let mut made = 0;
+        let mut total = 0.0;
+        self.edit(|p| {
+            clear_jump_cuts(&mut p.scene.slices);
+            made = apply_jump_cuts(&mut p.scene.slices, &ranges, || ids.pop().unwrap_or_else(|| "slice-x".into()));
+            total = cut_total_ms(&p.scene.slices);
+        });
+        self.select(Sel::None);
+        Ok((made, total))
+    }
+
+    /// Turn every jump cut back on.
+    pub fn clear_jump_cuts(&mut self) {
+        self.edit(|p| screencraft_core::jumpcut::clear_jump_cuts(&mut p.scene.slices));
+        self.select(Sel::None);
+    }
+
+    /// Switch the selected clip (or, with nothing selected, the clip under the playhead) between
+    /// playing and being a jump cut.
+    pub fn toggle_jump_cut(&mut self) {
+        let id = match &self.sel {
+            Sel::Slice(id) => Some(id.clone()),
+            _ => {
+                let (_, idx) = ops::out_to_src(&self.project.scene.slices, self.playhead_ms);
+                self.project.scene.slices.get(idx).map(|s| s.id.clone())
+            }
+        };
+        let Some(id) = id else { return };
+        self.edit(|p| {
+            if let Some(s) = p.scene.slices.iter_mut().find(|s| s.id == id) {
+                s.disabled = !s.disabled;
+            }
+        });
+        self.sel = Sel::Slice(id);
+    }
+
     /// Play one hit of a click / typing sound (when the style is picked in the Audio panel).
     pub fn preview_sound(&mut self, kind: &str, style: &str, volume: f64) {
         use screencraft_engine::audio_mix::{Extras, Soundtrack};
