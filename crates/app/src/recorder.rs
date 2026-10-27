@@ -17,7 +17,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-pub const BAR_W: f32 = 1100.0;
+pub const BAR_W: f32 = 1260.0;
 pub const BAR_H: f32 = 76.0;
 
 /// Resolution choices: cap on the long side in px (0 = the display's native resolution).
@@ -35,6 +35,8 @@ pub enum Mode {
     Display,
     Window,
     Area,
+    /// No screen: the camera is the picture (a talking-head video).
+    Camera,
 }
 
 impl Mode {
@@ -43,6 +45,7 @@ impl Mode {
             Mode::Display => "display",
             Mode::Window => "window",
             Mode::Area => "area",
+            Mode::Camera => "camera",
         }
     }
 }
@@ -219,6 +222,7 @@ impl Recorder {
     pub fn new(ctx: &egui::Context, prefs: &Prefs) -> Self {
         let (probe_tx, probe_rx) = channel();
         let mode = match prefs.mode.as_str() {
+            "camera" if prefs.camera => Mode::Camera,
             // an area or window pick does not survive a restart, so always start on the display
             _ => Mode::Display,
         };
@@ -281,6 +285,13 @@ impl Recorder {
                 Probe::Cameras(c) => {
                     self.cameras = c;
                     self.cameras_loaded = true;
+                    // a phone plugged in while the menu is open shows up right away
+                    if self.menu.as_ref().map(|m| m.kind == MenuKind::Camera).unwrap_or(false) {
+                        let items = self.camera_items(prefs);
+                        if let Some(m) = self.menu.as_mut() {
+                            m.items = items;
+                        }
+                    }
                 }
             }
         }
@@ -313,7 +324,12 @@ impl Recorder {
                 self.error = None;
             }
         }
-        self.live.sync(prefs, self.phase, self.parked);
+        let preset = match (self.mode, prefs.vertical) {
+            (Mode::Camera, true) => screencraft_capture::camera::CamPreset::TalkingHeadVertical,
+            (Mode::Camera, false) => screencraft_capture::camera::CamPreset::TalkingHead,
+            _ => screencraft_capture::camera::CamPreset::Bubble,
+        };
+        self.live.sync(prefs, self.phase, self.parked, preset);
         if let Some(e) = self.live.take_error() {
             self.show_error(e);
         }
@@ -342,6 +358,12 @@ impl Recorder {
             Mode::Display => Target::Display(display_id),
             Mode::Window => Target::Window(self.window.ok_or("choose a window to record")?),
             Mode::Area => Target::Area { display: display_id, rect: self.area.ok_or("draw the area to record")? },
+            Mode::Camera => {
+                if !prefs.camera {
+                    return Err("turn the camera on to record a talking-head video".into());
+                }
+                Target::Camera { vertical: prefs.vertical }
+            }
         };
         let package = Package::create_in(&prefs.recordings_dir, &stamp).map_err(|e| format!("cannot create the recording folder: {e}"))?;
         Ok(RecordOptions {
@@ -412,11 +434,24 @@ impl Recorder {
     fn camera_items(&self, prefs: &Prefs) -> Vec<MenuItem> {
         let mut v = vec![MenuItem::Header("Camera".into()), MenuItem::Item { label: "No camera".into(), sub: String::new(), checked: !prefs.camera, action: MenuAction::CameraOff }];
         for (id, name) in &self.cameras {
+            let lower = name.to_lowercase();
+            let phone = ["iphone", "ipad", "android", "pixel", "galaxy", "camo", "droidcam", "epoccam"].iter().any(|k| lower.contains(k));
             v.push(MenuItem::Item {
                 label: name.clone(),
-                sub: String::new(),
+                sub: if phone { "Phone camera".into() } else { String::new() },
                 checked: prefs.camera && prefs.camera_id.as_deref() == Some(id.as_str()),
                 action: MenuAction::Camera(id.clone(), name.clone()),
+            });
+        }
+        if !self.cameras.iter().any(|(_, n)| {
+            let l = n.to_lowercase();
+            l.contains("iphone") || l.contains("ipad") || l.contains("android")
+        }) {
+            v.push(MenuItem::Item {
+                label: "Use your phone as the camera".into(),
+                sub: "Plug it in by USB. iPhone: unlock it. Android: USB → Webcam.".into(),
+                checked: false,
+                action: MenuAction::None,
             });
         }
         v
@@ -628,7 +663,7 @@ impl Recorder {
         };
         group_caption(ui, x, "Capture");
         let seg_y = cap_top + 17.0;
-        let modes = [(Mode::Display, "Display", "monitor"), (Mode::Window, "Window", "window"), (Mode::Area, "Area", "area")];
+        let modes = [(Mode::Display, "Display", "monitor"), (Mode::Window, "Window", "window"), (Mode::Area, "Area", "area"), (Mode::Camera, "Camera", "camera")];
         let widths: Vec<f32> = modes.iter().map(|(_, l, _)| 10.0 * 2.0 + 17.0 + 7.0 + kit::text_width(ui, l, 12.5) + 1.0).collect();
         let seg_w: f32 = widths.iter().sum();
         let seg = Rect::from_min_size(Pos2::new(x, seg_y), Vec2::new(seg_w, 34.0));
@@ -638,7 +673,8 @@ impl Recorder {
             let r = Rect::from_min_size(Pos2::new(mx, seg_y), Vec2::new(widths[i], 34.0));
             let resp = ui.interact(r, ui.id().with(("mode", i)), Sense::click());
             let on = self.mode == *m;
-            let cr = CornerRadius { nw: if i == 0 { 9 } else { 0 }, sw: if i == 0 { 9 } else { 0 }, ne: if i == 2 { 9 } else { 0 }, se: if i == 2 { 9 } else { 0 } };
+            let last = modes.len() - 1;
+            let cr = CornerRadius { nw: if i == 0 { 9 } else { 0 }, sw: if i == 0 { 9 } else { 0 }, ne: if i == last { 9 } else { 0 }, se: if i == last { 9 } else { 0 } };
             if on {
                 ui.painter().rect_filled(r.shrink(1.0), cr, ACCENT);
             } else if resp.hovered() {
@@ -647,7 +683,7 @@ impl Recorder {
             let fg = if on { Color32::WHITE } else { Color32::from_rgb(0xb9, 0xc3, 0xd6) };
             icons::paint(ui, icon, Rect::from_center_size(Pos2::new(r.min.x + 10.0 + 8.5, cy_of(r)), Vec2::splat(17.0)), fg);
             ui.painter().text(Pos2::new(r.min.x + 10.0 + 24.0, cy_of(r)), Align2::LEFT_CENTER, label, kit::font(12.5), fg);
-            if i < 2 {
+            if i < last {
                 ui.painter().line_segment([Pos2::new(r.max.x - 0.5, r.min.y), Pos2::new(r.max.x - 0.5, r.max.y)], Stroke::new(1.0, LINE_2));
             }
             if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
@@ -679,6 +715,10 @@ impl Recorder {
         ];
         let mut toggled: Option<(MenuKind, f32)> = None;
         for (icon, label, on, kind, level, is_loading, tex) in opts {
+            // nothing plays "on the computer" in a talking-head video
+            if self.mode == Mode::Camera && kind == MenuKind::Sys {
+                continue;
+            }
             let (r, resp) = opt_button(ui, Pos2::new(x, oy), icon, &label, on, 108.0, level, is_loading, tex);
             if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() && !is_loading {
                 toggled = Some((kind, (r.min.x - left0).clamp(8.0, BAR_W - 320.0)));
@@ -701,6 +741,19 @@ impl Recorder {
             self.toggle_menu(MenuKind::Quality, items, (r.min.x - left0).clamp(8.0, BAR_W - 320.0));
         }
         x += r.width() + 6.0;
+        if matches!(self.mode, Mode::Area | Mode::Camera) {
+            let tip = if self.mode == Mode::Camera { "Record vertically (9:16), like a phone video" } else { "Keep the area 9:16 while you draw it" };
+            let (r, resp) = toggle_chip(ui, Pos2::new(x, oy), "9:16", prefs.vertical);
+            if resp.on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                prefs.vertical = !prefs.vertical;
+                prefs.save();
+                // a different shape needs a fresh area pick
+                if self.mode == Mode::Area {
+                    self.area = None;
+                }
+            }
+            x += r.width() + 6.0;
+        }
         let (r, resp) = opt_button_icon_right(ui, Pos2::new(x, oy), "Projects", "folder");
         if resp.on_hover_text("Open projects").on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
             let items = self.folder_items(prefs);
@@ -771,20 +824,27 @@ impl Recorder {
                 Action::None
             }
             Mode::Area => Action::PickArea,
+            Mode::Camera => {
+                // a talking-head video needs the camera
+                if !prefs.camera {
+                    prefs.camera = true;
+                    prefs.save();
+                }
+                Action::None
+            }
         }
     }
 
     fn click_input(&mut self, kind: MenuKind, left: f32, prefs: &mut Prefs) {
         match kind {
             MenuKind::Camera => {
-                if !self.cameras_loaded {
-                    self.cameras_loaded = true;
-                    let (tx, ctx) = (self.probe_tx.clone(), self.ctx.clone());
-                    std::thread::spawn(move || {
-                        let _ = tx.send(Probe::Cameras(screencraft_capture::camera::list()));
-                        ctx.request_repaint();
-                    });
-                }
+                // look again every time the menu opens, so a phone just plugged in is found
+                self.cameras_loaded = true;
+                let (tx, ctx) = (self.probe_tx.clone(), self.ctx.clone());
+                std::thread::spawn(move || {
+                    let _ = tx.send(Probe::Cameras(screencraft_capture::camera::list()));
+                    ctx.request_repaint();
+                });
                 let items = self.camera_items(prefs);
                 self.toggle_menu(kind, items, left);
             }
@@ -1065,6 +1125,23 @@ fn opt_button_chev(ui: &mut egui::Ui, at: Pos2, icon: &str, label: &str, max_w: 
     icons::paint(ui, svg_icon, Rect::from_center_size(Pos2::new(r.min.x + 10.0 + 8.5, r.center().y), Vec2::splat(17.0)), fg);
     ui.painter().text(Pos2::new(r.min.x + 10.0 + 24.0, r.center().y), Align2::LEFT_CENTER, label, kit::font(12.5), fg);
     icons::paint(ui, "chev", Rect::from_center_size(Pos2::new(r.max.x - 10.0 - 5.5, r.center().y), Vec2::splat(11.0)), fg);
+    (r, resp)
+}
+
+/// A small on/off chip (the 9:16 switch).
+fn toggle_chip(ui: &mut egui::Ui, at: Pos2, label: &str, on: bool) -> (Rect, egui::Response) {
+    let w = 10.0 * 2.0 + kit::text_width(ui, label, 12.5) + 7.0 + 12.0;
+    let r = Rect::from_min_size(at, Vec2::new(w, 34.0));
+    let resp = ui.interact(r, ui.id().with(("chip", label)), Sense::click());
+    let hov = resp.hovered();
+    let fill = if on { ACCENT } else { PANEL_2 };
+    ui.painter().rect_filled(r, CornerRadius::same(9), fill);
+    ui.painter().rect_stroke(r, CornerRadius::same(9), Stroke::new(1.0, if on { Color32::from_white_alpha(46) } else if hov { LINE_2 } else { LINE }), StrokeKind::Inside);
+    let fg = if on { Color32::WHITE } else if hov { Color32::WHITE } else { Color32::from_rgb(0xb9, 0xc3, 0xd6) };
+    // a little upright rectangle
+    let ic = Rect::from_center_size(Pos2::new(r.min.x + 10.0 + 4.0, r.center().y), Vec2::new(8.0, 13.0));
+    ui.painter().rect_stroke(ic, CornerRadius::same(2), Stroke::new(1.6, fg), StrokeKind::Inside);
+    ui.painter().text(Pos2::new(r.min.x + 10.0 + 12.0 + 6.0, r.center().y), Align2::LEFT_CENTER, label, kit::font(12.5), fg);
     (r, resp)
 }
 

@@ -11,6 +11,7 @@
 //! into a constant frame rate.
 
 pub mod camera;
+pub mod camera_capture;
 pub mod cfr;
 pub mod input;
 pub mod pixels;
@@ -73,6 +74,9 @@ pub enum Target {
     Window(u32),
     /// A rectangle in global logical points.
     Area { display: Option<u32>, rect: Rect },
+    /// No screen at all: the camera is the picture (a talking-head video). `vertical` crops or
+    /// keeps the picture in 9:16. Served by [`camera_capture::CameraCapturer`], not the OS backends.
+    Camera { vertical: bool },
 }
 
 #[derive(Clone, Debug)]
@@ -118,6 +122,8 @@ pub trait Capturer: Send {
     fn start(&mut self, req: &CaptureRequest, clock: Clock, tx: SyncSender<Event>) -> Result<StartInfo, String>;
     fn stop(&mut self);
 }
+
+pub use camera_capture::CameraCapturer;
 
 pub fn create_capturer() -> Box<dyn Capturer> {
     Box::new(platform::PlatformCapturer::default())

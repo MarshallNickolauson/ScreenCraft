@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **Jump cuts.** *Auto jump cuts* finds the pauses in your speech and switches those stretches off:
+  they stay on the timeline, greyed out, but playback skips them and the export leaves them out.
+  Drag a jump cut's edges to adjust it, press X to switch any clip on or off, and *Turn all jump cuts
+  off* brings everything back.
+- **Talking-head videos.** A new *Camera* capture mode records only the camera (no screen) and the
+  whole editor still works. *9:16* records vertically (a landscape camera is cropped around its
+  centre, an upright phone feed is used as it is) and also keeps a dragged area 9:16. Camera-only
+  recordings open with their jump cuts already made.
+- **Phone as the camera.** A phone plugged in by USB (iPhone through Continuity Camera, Android 14+
+  in Webcam mode, or Camo / DroidCam) is listed in the camera menu, which looks again every time it
+  opens. Cameras are now found through AVFoundation on macOS, so external and Continuity cameras
+  appear.
+
 ## 0.4.0: native rewrite
 
 ScreenCraft is now a single native Rust application (egui + wgpu), with the same look, layout and

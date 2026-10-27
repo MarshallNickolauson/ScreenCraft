@@ -57,6 +57,8 @@ pub struct Media {
     pub system_track: Option<u32>,
     /// Index of the microphone track inside `screen`.
     pub mic_track: Option<u32>,
+    /// A talking-head recording: the "screen" video is the camera picture itself (there is no screen).
+    pub camera_only: bool,
 }
 
 impl Default for Media {
@@ -76,6 +78,7 @@ impl Default for Media {
             mic_offset_ms: 0.0,
             system_track: None,
             mic_track: None,
+            camera_only: false,
         }
     }
 }
@@ -747,6 +750,17 @@ impl Project {
             c.offset_ms = crate::timeline::display_to_effective(src, c.offset_ms);
         }
         p.scene.slices = crate::timeline::enabled(src);
+        p
+    }
+
+    /// A talking-head recording: the picture fills the frame (no padding, corners, shadow or
+    /// cursor) and is ready for every editing tool: captions, jump cuts, zooms, music, export.
+    pub fn talking_head(name: &str, media: Media) -> Self {
+        let mut p = Self::from_recording(name, Media { camera_only: true, ..media });
+        p.config.styles.padding_ratio = 0.0;
+        p.config.styles.corner_radius = 0.0;
+        p.config.styles.shadow.intensity = 0.0;
+        p.config.cursor.hide = true;
         p
     }
 

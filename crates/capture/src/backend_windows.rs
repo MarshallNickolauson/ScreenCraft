@@ -177,6 +177,7 @@ impl Capturer for PlatformCapturer {
         }
         // Resolve the display and the capture rectangle in that display's physical pixels.
         let (display, phys_crop): (Display, (i32, i32, i32, i32)) = match &req.target {
+            Target::Camera { .. } => return Err("the camera is recorded by the camera capturer".into()),
             Target::Display(id) => {
                 let d = monitors::display(*id).ok_or("display not found")?;
                 let p = d.phys;

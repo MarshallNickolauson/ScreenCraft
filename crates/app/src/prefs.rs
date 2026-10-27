@@ -13,8 +13,10 @@ pub struct Prefs {
     pub microphone: bool,
     pub microphone_id: Option<String>,
     pub microphone_name: String,
-    /// "display", "window" or "area" (a window or area pick does not survive a restart).
+    /// "display", "window", "area" or "camera" (a window or area pick does not survive a restart).
     pub mode: String,
+    /// 9:16: the area picker keeps that shape, and a camera-only video is cut to it.
+    pub vertical: bool,
     pub camera: bool,
     pub camera_id: Option<String>,
     pub camera_label: String,
@@ -36,6 +38,7 @@ impl Default for Prefs {
             microphone_id: None,
             microphone_name: String::new(),
             mode: "display".into(),
+            vertical: false,
             camera: false,
             camera_id: None,
             camera_label: String::new(),

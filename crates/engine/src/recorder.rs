@@ -15,7 +15,7 @@ use screencraft_audio::{AudioBlock, AudioCapture, CaptureConfig, Clock, Source, 
 use screencraft_capture::cfr::Cfr;
 use screencraft_capture::input::InputTracker;
 use screencraft_capture::pixels::crop_scale;
-use screencraft_capture::{create_capturer, CaptureRequest, Capturer, Event, StartInfo, Target};
+use screencraft_capture::{create_capturer, CameraCapturer, CaptureRequest, Capturer, Event, StartInfo, Target};
 use screencraft_core::project::{Media, Project, Rect};
 use screencraft_encode::color::{default_threads, to_i420, PixelOrder};
 use screencraft_encode::{
@@ -40,6 +40,13 @@ pub struct RecordOptions {
     /// is intentionally high.
     pub bitrate_kbps: Option<u32>,
     pub hardware: HwPreference,
+}
+
+impl RecordOptions {
+    /// A talking-head video: the camera is the picture and there is no screen.
+    pub fn camera_only(&self) -> bool {
+        matches!(self.target, Target::Camera { .. })
+    }
 }
 
 /// The camera bubble: the hub that fans the live camera out, shared with the recorder's preview.
@@ -125,7 +132,14 @@ fn unix_ms() -> f64 {
 impl Recording {
     /// Start capturing. Returns once frames are flowing (or an error explains why not).
     pub fn start(opts: RecordOptions) -> Result<Self, String> {
-        Self::start_with(opts, create_capturer())
+        let capturer: Box<dyn Capturer> = match &opts.target {
+            Target::Camera { .. } => {
+                let hub = opts.camera.as_ref().map(|c| c.hub.clone()).ok_or("turn the camera on to record a talking-head video")?;
+                Box::new(CameraCapturer::new(hub))
+            }
+            _ => create_capturer(),
+        };
+        Self::start_with(opts, capturer)
     }
 
     /// Like `start`, with a caller-supplied capture backend (tests, synthetic sources).
@@ -140,7 +154,12 @@ impl Recording {
         r
     }
 
-    fn start_inner(opts: RecordOptions, mut capturer: Box<dyn Capturer>) -> Result<Self, String> {
+    fn start_inner(mut opts: RecordOptions, mut capturer: Box<dyn Capturer>) -> Result<Self, String> {
+        let camera_only = matches!(opts.target, Target::Camera { .. });
+        if camera_only {
+            // nothing plays "on the computer" in a talking-head video
+            opts.system_audio = false;
+        }
         std::fs::create_dir_all(&opts.output.dir).map_err(|e| e.to_string())?;
         let clock = Clock::start();
         let (cap_tx, cap_rx) = crossbeam_channel::bounded::<Event>(24);
@@ -164,16 +183,21 @@ impl Recording {
             max_long_side: opts.max_long_side,
             system_audio: opts.system_audio,
         };
-        let tracker = InputTracker::start(match &opts.target {
-            Target::Display(d) => *d,
-            Target::Area { display, .. } => *display,
-            Target::Window(_) => None,
+        // no cursor, clicks or keys to log when the camera is the picture
+        let tracker = (!camera_only).then(|| {
+            InputTracker::start(match &opts.target {
+                Target::Display(d) => *d,
+                Target::Area { display, .. } => *display,
+                Target::Window(_) | Target::Camera { .. } => None,
+            })
         });
         let info = match capturer.start(&req, clock.clone(), std_tx) {
             Ok(i) => i,
             Err(e) => {
                 // Drop the tracker's threads cleanly.
-                let _ = tracker.finish(clock.epoch(), Rect::default());
+                if let Some(t) = tracker {
+                    let _ = t.finish(clock.epoch(), Rect::default());
+                }
                 return Err(e);
             }
         };
@@ -200,7 +224,9 @@ impl Recording {
                 Ok(a) => Some(a),
                 Err(e) => {
                     capturer.stop();
-                    let _ = tracker.finish(clock.epoch(), Rect::default());
+                    if let Some(t) = tracker {
+                        let _ = t.finish(clock.epoch(), Rect::default());
+                    }
                     return Err(e);
                 }
             }
@@ -254,7 +280,7 @@ impl Recording {
                 .map_err(|e| e.to_string())?
         };
 
-        let camera = opts.camera.as_ref().and_then(|c| {
+        let camera = opts.camera.as_ref().filter(|_| !camera_only).and_then(|c| {
             match crate::camera_rec::CameraRecorder::start(c.hub.clone(), opts.output.dir.join("camera.mp4"), clock.clone(), opts.hardware) {
                 Ok(r) => Some(r),
                 Err(e) => {
@@ -267,7 +293,7 @@ impl Recording {
             camera,
             capturer,
             audio,
-            tracker: Some(tracker),
+            tracker,
             ctl: ctl_tx,
             worker: Some(worker),
             clock,
@@ -376,7 +402,7 @@ impl Recording {
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "Recording".into());
-        let mut project = Project::from_recording(&stem, media);
+        let mut project = if self.opts.camera_only() { Project::talking_head(&stem, media) } else { Project::from_recording(&stem, media) };
         project.id = format!("{:x}", self.started_unix_ms as u64);
         project.created_at = format!("{}", self.started_unix_ms as u64);
         self.opts.output.save_project(&project)?;

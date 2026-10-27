@@ -81,7 +81,14 @@ impl App {
             Ok(mut ed) => {
                 if let Some(i) = self.fresh.iter().position(|d| *d == ed.package.dir) {
                     self.fresh.remove(i);
-                    if ed.project.scene.zooms.is_empty() {
+                    if ed.project.media.camera_only {
+                        // a talking-head video opens with its pauses already switched off (they
+                        // stay on the timeline, greyed out, to adjust or turn back on)
+                        if ed.project.scene.slices.iter().all(|s| !s.disabled) {
+                            let _ = ed.auto_jump_cuts(Default::default());
+                            ed.save_now();
+                        }
+                    } else if ed.project.scene.zooms.is_empty() {
                         ed.auto_zoom();
                         ed.save_now();
                     }
@@ -109,6 +116,12 @@ impl App {
             "quality" => self.rec.menu_for_dev(crate::recorder::MenuKind::Quality, &self.prefs),
             "sys" => self.rec.menu_for_dev(crate::recorder::MenuKind::Sys, &self.prefs),
             "folder" => self.rec.menu_for_dev(crate::recorder::MenuKind::Folder, &self.prefs),
+            "camera" => self.rec.menu_for_dev(crate::recorder::MenuKind::Camera, &self.prefs),
+            "mode-camera" => {
+                self.rec.mode = Mode::Camera;
+                self.prefs.vertical = true;
+                return;
+            }
             _ => return,
         };
         self.rec.menu = Some(items);
@@ -218,8 +231,13 @@ impl App {
         if self.rec.phase != Phase::Idle {
             return;
         }
-        if !self.rec.permissions.screen {
+        // a talking-head video never looks at the screen
+        if self.rec.mode != Mode::Camera && !self.rec.permissions.screen {
             self.show_permissions = true;
+            return;
+        }
+        if self.rec.mode == Mode::Camera && !self.prefs.camera {
+            self.rec.show_error("Turn the camera on to record a talking-head video.");
             return;
         }
         if self.rec.mode == Mode::Window && self.rec.window.is_none() {
@@ -269,7 +287,7 @@ impl App {
     fn pick_area(&mut self, ctx: &egui::Context) {
         let displays = self.rec.displays().to_vec();
         let d = displays.iter().find(|d| Some(d.id) == self.rec.display).or(displays.first()).cloned();
-        self.area_picker = Some(crate::area::Picker::new(d));
+        self.area_picker = Some(crate::area::Picker::new(d, self.prefs.vertical.then_some(9.0 / 16.0)));
         ctx.request_repaint();
     }
 

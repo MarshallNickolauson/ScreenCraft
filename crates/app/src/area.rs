@@ -16,11 +16,13 @@ pub enum Outcome {
 pub struct Picker {
     display: Option<DisplayInfo>,
     drag: Option<(Pos2, Pos2)>,
+    /// Width / height the drawn area must keep (9:16 for a vertical video).
+    ratio: Option<f32>,
 }
 
 impl Picker {
-    pub fn new(display: Option<DisplayInfo>) -> Self {
-        Self { display, drag: None }
+    pub fn new(display: Option<DisplayInfo>, ratio: Option<f32>) -> Self {
+        Self { display, drag: None, ratio }
     }
 
     pub fn display_id(&self) -> Option<u32> {
@@ -42,6 +44,7 @@ impl Picker {
         let mut out = Outcome::Pending;
         let origin = (x, y);
         let drag = &mut self.drag;
+        let ratio = self.ratio;
         ctx.show_viewport_immediate(ViewportId::from_hash_of("area-picker"), builder, |ui, _| {
             let ctx = ui.ctx().clone();
             ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
@@ -56,7 +59,16 @@ impl Picker {
                 }
                 if resp.dragged() {
                     if let (Some(d), Some(p)) = (drag.as_mut(), resp.interact_pointer_pos()) {
-                        d.1 = p;
+                        d.1 = match ratio {
+                            Some(r) => {
+                                // keep the shape: take the larger of the two sizes the pointer implies
+                                let (dx, dy) = (p.x - d.0.x, p.y - d.0.y);
+                                let (w, h) = (dx.abs(), dy.abs());
+                                let (w2, h2) = if h > 0.0 && w / h.max(1.0) > r { (h * r, h) } else { (w, w / r) };
+                                Pos2::new(d.0.x + w2 * dx.signum(), d.0.y + h2 * dy.signum())
+                            }
+                            None => p,
+                        };
                     }
                 }
                 let dim = Color32::from_black_alpha(89);
@@ -87,7 +99,7 @@ impl Picker {
                     }
                 }
                 // hint
-                let msg = "Drag to select the area to record · Esc to cancel";
+                let msg = if ratio.is_some() { "Drag to select a vertical (9:16) area · Esc to cancel" } else { "Drag to select the area to record · Esc to cancel" };
                 let tw = kit::text_width(ui, msg, 12.0) + 28.0;
                 let hr = Rect::from_min_size(Pos2::new(full.center().x - tw / 2.0, full.min.y + 24.0), Vec2::new(tw, 34.0));
                 painter.rect_filled(hr, CornerRadius::same(8), PANEL);

@@ -5,7 +5,7 @@ use crate::prefs::Prefs;
 use crate::recorder::Phase;
 use eframe::egui;
 use screencraft_audio::{AudioBlock, AudioCapture, CaptureConfig, Clock};
-use screencraft_capture::camera::{CamFrame, CameraHub, CameraStream};
+use screencraft_capture::camera::{CamFrame, CamPreset, CameraHub, CameraStream};
 use screencraft_capture::{create_capturer, CaptureRequest, Capturer, Event, Target};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -26,6 +26,7 @@ pub struct Live {
     ctx: egui::Context,
     hub: Arc<CameraHub>,
     camera: Option<Started<CameraStream>>,
+    camera_preset: CamPreset,
     camera_starting: Arc<AtomicBool>,
     camera_slot: Arc<Mutex<Option<Result<Started<CameraStream>, String>>>>,
     tex: Option<egui::TextureHandle>,
@@ -56,6 +57,7 @@ impl Live {
             ctx: ctx.clone(),
             hub: CameraHub::new(),
             camera: None,
+            camera_preset: CamPreset::Bubble,
             camera_starting: Arc::new(AtomicBool::new(false)),
             camera_slot: Arc::new(Mutex::new(None)),
             tex: None,
@@ -98,7 +100,7 @@ impl Live {
     }
 
     /// Start or stop the camera and microphone meter so they match `prefs` and the phase.
-    pub fn sync(&mut self, prefs: &Prefs, phase: Phase, parked: bool) {
+    pub fn sync(&mut self, prefs: &Prefs, phase: Phase, parked: bool, preset: CamPreset) {
         // finished background starts
         if let Some(r) = self.camera_slot.lock().unwrap().take() {
             match r {
@@ -124,7 +126,7 @@ impl Live {
         let want_cam = prefs.camera && in_use;
         let cam_key = prefs.camera_id.clone();
         if let Some(c) = &self.camera {
-            if !want_cam || c.key != cam_key {
+            if !want_cam || c.key != cam_key || (self.camera_preset != preset && phase == Phase::Idle) {
                 if let Some(c) = self.camera.take() {
                     c.handle.stop();
                 }
@@ -133,11 +135,12 @@ impl Live {
             }
         }
         if want_cam && self.camera.is_none() && !self.camera_starting.swap(true, Ordering::SeqCst) {
+            self.camera_preset = preset;
             let (slot, flag, hub, ctx, id) = (self.camera_slot.clone(), self.camera_starting.clone(), self.hub.clone(), self.ctx.clone(), cam_key.clone());
             std::thread::spawn(move || {
                 let h2 = hub.clone();
                 let ctx2 = ctx.clone();
-                let r = screencraft_capture::camera::start(id.as_deref(), move |f: CamFrame| {
+                let r = screencraft_capture::camera::start(id.as_deref(), preset, move |f: CamFrame| {
                     h2.publish(f);
                     ctx2.request_repaint();
                 })

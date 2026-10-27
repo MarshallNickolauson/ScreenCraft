@@ -90,6 +90,8 @@ extern "C" {
         total_length: *mut usize,
         data: *mut *mut u8,
     ) -> OSStatus;
+    fn CMBlockBufferGetDataLength(block: *const c_void) -> usize;
+    fn CMBlockBufferCopyDataBytes(block: *const c_void, offset: usize, len: usize, dest: *mut c_void) -> OSStatus;
     fn CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
         desc: *const c_void,
         index: usize,
@@ -163,12 +165,14 @@ extern "C" fn on_output(refcon: *mut c_void, _src: *mut c_void, status: OSStatus
         if block.is_null() {
             return;
         }
-        let (mut at_off, mut total, mut ptr) = (0usize, 0usize, std::ptr::null_mut::<u8>());
-        if CMBlockBufferGetDataPointer(block, 0, &mut at_off, &mut total, &mut ptr) != 0 || ptr.is_null() {
+        // copy the whole sample: the buffer may be made of several pieces, so a single pointer
+        // can cover only the first of them
+        let total = CMBlockBufferGetDataLength(block);
+        let mut data = vec![0u8; total];
+        if total == 0 || CMBlockBufferCopyDataBytes(block, 0, total, data.as_mut_ptr() as *mut c_void) != 0 {
             sh.error = Some("VideoToolbox returned an unreadable buffer".into());
             return;
         }
-        let data = std::slice::from_raw_parts(ptr, total).to_vec();
 
         let mut key = true;
         let att = CMSampleBufferGetSampleAttachmentsArray(sbuf, 0);

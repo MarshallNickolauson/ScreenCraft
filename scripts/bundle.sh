@@ -44,6 +44,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleVersion</key><string>1</string>
   <key>LSMinimumSystemVersion</key><string>15.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSCameraUseContinuityCameraDeviceType</key><true/>
   <key>NSCameraUsageDescription</key><string>ScreenCraft uses the camera to add your face to recordings.</string>
   <key>NSMicrophoneUsageDescription</key><string>ScreenCraft uses the microphone to record narration.</string>
   <key>NSScreenCaptureUsageDescription</key><string>ScreenCraft records your screen.</string>

@@ -177,6 +177,7 @@ impl Capturer for PlatformCapturer {
             .collect();
 
         let (filter, bounds, source_rect, display_id): (SCContentFilter, Rect, Option<CGRect>, Option<u32>) = match &req.target {
+            Target::Camera { .. } => return Err("the camera is recorded by the camera capturer".into()),
             Target::Window(id) => {
                 let w = windows.iter().find(|w| w.window_id() == *id).ok_or("window not found")?;
                 let f = w.frame();
@@ -196,6 +197,7 @@ impl Capturer for PlatformCapturer {
                     .build()
                     .map_err(|e| e.to_string())?;
                 match &req.target {
+                    Target::Camera { .. } => unreachable!(),
                     Target::Area { rect, .. } => {
                         let local = CGRect::new(rect.x - df.origin.x, rect.y - df.origin.y, rect.width, rect.height);
                         (filter, *rect, Some(local), Some(display.display_id()))
