@@ -6,6 +6,8 @@ use eframe::egui;
 use screencraft::{app::App, headless::Headless};
 
 fn main() {
+    // a screenshot must never grab the camera or microphone the real app may be using
+    std::env::set_var("SCREENCRAFT_NO_LIVE", "1");
     let args: Vec<String> = std::env::args().collect();
     let out = args.get(1).cloned().unwrap_or_else(|| "shot.png".into());
     let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1).cloned());

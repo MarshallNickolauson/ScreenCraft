@@ -175,19 +175,27 @@ pub fn start(id: Option<&str>, preset: CamPreset, mut on_frame: impl FnMut(CamFr
             tries.push(RequestedFormatType::None);
             let mut opened = None;
             let mut last = String::new();
-            for t in tries {
-                match Camera::new(index.clone(), RequestedFormat::new::<RgbFormat>(t)) {
-                    Ok(c) => {
-                        opened = Some(c);
-                        break;
+            // another app (or an earlier session of this one) may still be letting go of the camera:
+            // "Lock Rejected" usually clears within a second, so try a few times before giving up
+            'attempts: for attempt in 0..4 {
+                if attempt > 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(600));
+                }
+                for t in tries.iter().cloned() {
+                    match Camera::new(index.clone(), RequestedFormat::new::<RgbFormat>(t)) {
+                        Ok(c) => {
+                            opened = Some(c);
+                            break 'attempts;
+                        }
+                        Err(e) => last = e.to_string(),
                     }
-                    Err(e) => last = e.to_string(),
                 }
             }
             let mut cam = match opened {
                 Some(c) => c,
                 None => {
-                    let _ = ready_tx.send(Err(format!("could not open the camera: {last}")));
+                    let msg = if last.contains("Lock Rejected") { "the camera is in use by another app. Close it there and try again".to_string() } else { format!("could not open the camera: {last}") };
+                    let _ = ready_tx.send(Err(msg));
                     return;
                 }
             };

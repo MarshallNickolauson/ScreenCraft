@@ -121,6 +121,9 @@ impl Live {
                 Err(_) => self.sys_failed = true,
             }
         }
+        if std::env::var_os("SCREENCRAFT_NO_LIVE").is_some() {
+            return;
+        }
         let in_use = matches!(phase, Phase::Idle | Phase::Countdown | Phase::Recording | Phase::Confirm | Phase::Starting);
         // camera
         let want_cam = prefs.camera && in_use;
