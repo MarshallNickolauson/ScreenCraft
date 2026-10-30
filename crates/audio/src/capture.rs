@@ -90,14 +90,13 @@ impl AudioCapture {
         let mut system_format = None;
 
         if cfg.use_microphone {
-            let device = match &cfg.microphone {
-                Some(id) => id
-                    .parse::<cpal::DeviceId>()
-                    .ok()
-                    .and_then(|i| host.device_by_id(&i))
-                    .ok_or_else(|| "the selected microphone is not available".to_string())?,
-                None => host.default_input_device().ok_or_else(|| "no microphone found".to_string())?,
-            };
+            // The chosen microphone may be unplugged, switched off or renumbered since it was
+            // saved; rather than failing, fall back to one that works (the system default first).
+            let chosen = cfg.microphone.as_ref().and_then(|id| id.parse::<cpal::DeviceId>().ok()).and_then(|i| host.device_by_id(&i));
+            let device = chosen
+                .or_else(|| host.default_input_device())
+                .or_else(|| host.input_devices().ok().and_then(|mut it| it.find(|d| d.default_input_config().is_ok())))
+                .ok_or_else(|| "no microphone found".to_string())?;
             let conf = device.default_input_config().map_err(|e| format!("microphone: {e}"))?;
             microphone_format = Some((conf.sample_rate(), conf.channels()));
             streams.push(build(&device, conf, Source::Microphone, clock.clone(), tx.clone())?);
