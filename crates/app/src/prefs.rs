@@ -34,7 +34,7 @@ impl Default for Prefs {
             fps: 30,
             max_long_side: 2560,
             system_audio: true,
-            microphone: false,
+            microphone: true,
             microphone_id: None,
             microphone_name: String::new(),
             mode: "display".into(),
