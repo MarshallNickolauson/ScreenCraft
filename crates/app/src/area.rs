@@ -42,13 +42,17 @@ impl Picker {
             .with_taskbar(false)
             .with_always_on_top();
         let mut out = Outcome::Pending;
-        let origin = (x, y);
+        let mut origin = (x, y);
         let drag = &mut self.drag;
         let ratio = self.ratio;
         ctx.show_viewport_immediate(ViewportId::from_hash_of("area-picker"), builder, |ui, _| {
             let ctx = ui.ctx().clone();
             ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
             let full = ui.max_rect();
+            // The system may keep the window below the menu bar, so use where it really is.
+            if let Some(inner) = ctx.input(|i| i.viewport().inner_rect) {
+                origin = (inner.min.x, inner.min.y);
+            }
             egui::CentralPanel::default().frame(egui::Frame::NONE).show_inside(ui, |ui| {
                 let resp = ui.allocate_rect(full, egui::Sense::click_and_drag());
                 let painter = ui.painter();
@@ -59,12 +63,19 @@ impl Picker {
                 }
                 if resp.dragged() {
                     if let (Some(d), Some(p)) = (drag.as_mut(), resp.interact_pointer_pos()) {
+                        let p = p.clamp(full.min, full.max);
                         d.1 = match ratio {
                             Some(r) => {
                                 // keep the shape: take the larger of the two sizes the pointer implies
                                 let (dx, dy) = (p.x - d.0.x, p.y - d.0.y);
                                 let (w, h) = (dx.abs(), dy.abs());
-                                let (w2, h2) = if h > 0.0 && w / h.max(1.0) > r { (h * r, h) } else { (w, w / r) };
+                                let (mut w2, mut h2) = if h > 0.0 && w / h.max(1.0) > r { (h * r, h) } else { (w, w / r) };
+                                // stay on the screen, keeping the shape
+                                let room_x = if dx >= 0.0 { full.max.x - d.0.x } else { d.0.x - full.min.x };
+                                let room_y = if dy >= 0.0 { full.max.y - d.0.y } else { d.0.y - full.min.y };
+                                let k = (room_x / w2.max(1.0)).min(room_y / h2.max(1.0)).min(1.0);
+                                w2 *= k;
+                                h2 *= k;
                                 Pos2::new(d.0.x + w2 * dx.signum(), d.0.y + h2 * dy.signum())
                             }
                             None => p,
@@ -144,6 +155,7 @@ pub fn draw_frame(ctx: &egui::Context, rect: PRect, style: &'static str, display
         .with_always_on_top();
     ctx.show_viewport_immediate(ViewportId::from_hash_of(("frame", style)), builder, |ui, _| {
         let full = ui.max_rect();
+        let (dx, dy) = ui.input(|i| i.viewport().inner_rect).map(|r| (r.min.x, r.min.y)).unwrap_or((dx, dy));
         let hole = Rect::from_min_size(Pos2::new(rect.x as f32 - dx, rect.y as f32 - dy), Vec2::new(rect.width as f32, rect.height as f32));
         let p = ui.painter();
         let dim = match style {
