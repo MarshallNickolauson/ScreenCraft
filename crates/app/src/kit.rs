@@ -171,7 +171,7 @@ pub fn segmented<T: PartialEq + Clone>(ui: &mut Ui, label: Option<&str>, options
         }
     }
     for (r, i, first, last, ri) in hit {
-        let resp = ui.interact(r, ui.id().with(("seg", i, label)), Sense::click());
+        let resp = ui.interact(r, ui.id().with(("seg", i, label, r.min.x.round() as i32, r.min.y.round() as i32)), Sense::click());
         let on = cells[i].value == *cur;
         let cr = CornerRadius {
             nw: if first && ri == 0 { 7 } else { 0 },

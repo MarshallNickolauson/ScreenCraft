@@ -236,14 +236,7 @@ pub fn show(st: &mut EditorState, ctx: &egui::Context) {
             }
 
             let ex = &mut st.export;
-            row(ui, "Format", None, |ui| {
-                let mut o: Vec<(Format, &str)> = vec![(Format::Mp4, "MP4")];
-                if available_video_codecs().contains(&VideoCodec::Av1) {
-                    o.push((Format::WebM, "WebM"));
-                }
-                o.push((Format::Gif, "GIF"));
-                kit::segmented(ui, None, &o, &mut ex.format);
-            });
+            ex.format = Format::Mp4;
             row(ui, "Resolution", None, |ui| {
                 kit::segmented(ui, None, &[(720u32, "720p"), (1080, "1080p"), (1440, "1440p"), (2160, "4K")], &mut ex.resolution);
             });
