@@ -206,7 +206,6 @@ pub struct Menu {
     filter: String,
     selected: Option<usize>,
     search_focus_pending: bool,
-    screenshot_fixture: bool,
 }
 
 /// What the bar asks the application to do.
@@ -328,7 +327,7 @@ impl Recorder {
                     self.cameras = c;
                     self.cameras_loaded = true;
                     // a phone plugged in while the menu is open shows up right away
-                    if self.menu.as_ref().map(|m| m.kind == MenuKind::Camera && !m.screenshot_fixture).unwrap_or(false) {
+                    if self.menu.as_ref().map(|m| m.kind == MenuKind::Camera).unwrap_or(false) {
                         let items = self.camera_items(prefs);
                         if let Some(m) = self.menu.as_mut() {
                             m.items = items;
@@ -442,40 +441,7 @@ impl Recorder {
         let items = match kind {
             MenuKind::Quality => self.quality_items(prefs),
             MenuKind::Sys => self.sys_items(prefs),
-            MenuKind::Camera => {
-                let names = [
-                    "Built-in FaceTime HD Camera",
-                    "Continuity Camera — iPhone",
-                    "Blackmagic Web Presenter",
-                    "Logitech BRIO 4K",
-                    "Elgato Facecam",
-                    "OBS Virtual Camera",
-                    "Camo Camera",
-                    "iPhone 16 Pro Camera",
-                    "Studio Display Camera",
-                    "USB Capture Device",
-                    "Meetup Conference Camera",
-                    "Virtual Camera",
-                ];
-                std::iter::once(MenuItem::Header("Camera".into()))
-                    .chain(std::iter::once(MenuItem::Item {
-                        label: "No camera".into(),
-                        sub: String::new(),
-                        checked: false,
-                        action: MenuAction::CameraOff,
-                    }))
-                    .chain(names.iter().enumerate().map(|(i, name)| MenuItem::Item {
-                        label: (*name).into(),
-                        sub: if i == 1 || i == 7 {
-                            "Phone camera".into()
-                        } else {
-                            String::new()
-                        },
-                        checked: false,
-                        action: MenuAction::Camera(format!("sample-{i}"), (*name).into()),
-                    }))
-                    .collect()
-            }
+            MenuKind::Camera => self.camera_items(prefs),
             _ => self.folder_items(prefs),
         };
         Menu {
@@ -485,7 +451,6 @@ impl Recorder {
             filter: String::new(),
             selected: None,
             search_focus_pending: kind.is_searchable(),
-            screenshot_fixture: true,
         }
     }
 
@@ -509,7 +474,6 @@ impl Recorder {
             filter: String::new(),
             selected: None,
             search_focus_pending: kind.is_searchable(),
-            screenshot_fixture: false,
         });
     }
 
@@ -965,16 +929,12 @@ impl Recorder {
         let Some(kind) = self.menu.as_ref().map(|menu| menu.kind) else {
             return Action::None;
         };
-        let items = if self.menu.as_ref().map(|menu| menu.screenshot_fixture).unwrap_or(false) {
-            None
-        } else {
-            match kind {
-                MenuKind::Camera => Some(self.camera_items(prefs)),
-                MenuKind::Mic => Some(self.mic_items(prefs)),
-                MenuKind::Sys => Some(self.sys_items(prefs)),
-                MenuKind::Quality => Some(self.quality_items(prefs)),
-                _ => None,
-            }
+        let items = match kind {
+            MenuKind::Camera => Some(self.camera_items(prefs)),
+            MenuKind::Mic => Some(self.mic_items(prefs)),
+            MenuKind::Sys => Some(self.sys_items(prefs)),
+            MenuKind::Quality => Some(self.quality_items(prefs)),
+            _ => None,
         };
         if let (Some(items), Some(menu)) = (items, self.menu.as_mut()) {
             menu.items = items;
