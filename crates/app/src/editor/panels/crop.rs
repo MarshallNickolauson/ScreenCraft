@@ -27,4 +27,17 @@ pub fn show(st: &mut EditorState, ui: &mut Ui) {
     if kit::btn_line(ui, "Reset crop", false).clicked() {
         st.edit(|p| p.config.crop = screencraft_core::project::Rect::FULL);
     }
+
+    kit::h3(ui, "Screen layout", false);
+    kit::hint(ui, "Drag the screen in the preview to move it. Drag its lower-right corner to resize it.");
+    let mut scale = st.project.config.styles.screen_scale;
+    if kit::slider(ui, "Screen size", &mut scale, 0.25, 3.0, 0.05, |v| format!("{}%", (v * 100.0).round())) {
+        st.edit_keyed(Some("screen-scale"), |p| p.config.styles.screen_scale = scale);
+    }
+    if kit::btn_line(ui, "Reset screen layout", false).clicked() {
+        st.edit(|p| {
+            p.config.styles.screen_scale = 1.0;
+            p.config.styles.screen_offset = screencraft_core::project::Point::default();
+        });
+    }
 }
