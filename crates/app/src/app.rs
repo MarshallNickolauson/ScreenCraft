@@ -21,6 +21,10 @@ pub struct App {
     prefs: Prefs,
     rec: Recorder,
     editors: Vec<EditorWin>,
+    #[cfg(target_os = "macos")]
+    active_editor: Option<ViewportId>,
+    #[cfg(target_os = "macos")]
+    native_menu: Option<crate::macos_menu::NativeMenu>,
     next_editor: u64,
     render_state: eframe::egui_wgpu::RenderState,
     _hotkeys: Option<GlobalHotKeyManager>,
@@ -157,6 +161,10 @@ impl App {
             rec,
             prefs,
             editors: Vec::new(),
+            #[cfg(target_os = "macos")]
+            active_editor: None,
+            #[cfg(target_os = "macos")]
+            native_menu: None,
             next_editor: 0,
             render_state,
             _hotkeys: mgr,
@@ -292,6 +300,9 @@ impl App {
     }
 
     fn pump_events(&mut self, ctx: &egui::Context) {
+        #[cfg(target_os = "macos")]
+        self.pump_native_menu(ctx);
+
         while let Ok(evt) = self.rec.controller.rx.try_recv() {
             match evt {
                 Evt::Started { stats, width, height, encoder } => {
@@ -348,6 +359,113 @@ impl App {
             if self.rec.countdown_at.map(|t| t.elapsed() >= Duration::from_secs(3)).unwrap_or(false) {
                 self.start_capture(ctx);
             }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn active_editor_mut(&mut self) -> Option<&mut EditorWin> {
+        let index = self
+            .active_editor
+            .and_then(|id| self.editors.iter().position(|editor| editor.id == id))
+            .or_else(|| self.editors.len().checked_sub(1))?;
+        self.editors.get_mut(index)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn pump_native_menu(&mut self, ctx: &egui::Context) {
+        use crate::macos_menu::Command;
+
+        let commands = self.native_menu.as_ref().map_or_else(Vec::new, crate::macos_menu::NativeMenu::poll);
+        for command in commands {
+            match command {
+                Command::NewRecording => match self.rec.phase {
+                    Phase::Idle => self.begin_recording(ctx),
+                    Phase::Countdown | Phase::Recording => self.finish_recording(ctx, false),
+                    _ => {}
+                },
+                Command::OpenProject => {
+                    if let Some(dir) = rfd::FileDialog::new().set_title("Open ScreenCraft Project").pick_folder() {
+                        self.pending_open.push(dir);
+                    }
+                }
+                Command::Save => {
+                    if let Some(editor) = self.active_editor_mut() {
+                        editor.ed.save_now();
+                    }
+                }
+                Command::Export => {
+                    if let Some(editor) = self.active_editor_mut() {
+                        editor.ed.export.open = true;
+                    }
+                }
+                Command::Undo => {
+                    if let Some(editor) = self.active_editor_mut() {
+                        editor.ed.undo();
+                    }
+                }
+                Command::Redo => {
+                    if let Some(editor) = self.active_editor_mut() {
+                        editor.ed.redo();
+                    }
+                }
+                Command::Split => {
+                    if let Some(editor) = self.active_editor_mut() {
+                        editor.ed.split_at_playhead();
+                    }
+                }
+                Command::ToggleJumpCut => {
+                    if let Some(editor) = self.active_editor_mut() {
+                        editor.ed.toggle_jump_cut();
+                    }
+                }
+                Command::Delete => {
+                    if let Some(editor) = self.active_editor_mut() {
+                        editor.ed.delete_selected();
+                    }
+                }
+                Command::SelectAll => {
+                    if let Some(editor) = self.active_editor_mut() {
+                        editor.ed.select_all();
+                    }
+                }
+                Command::PlayPause => {
+                    if let Some(editor) = self.active_editor_mut() {
+                        if editor.ed.is_playing() {
+                            editor.ed.pause();
+                        } else {
+                            editor.ed.play();
+                        }
+                    }
+                }
+                Command::AddZoom => {
+                    if let Some(editor) = self.active_editor_mut() {
+                        editor.ed.add_zoom_at_playhead();
+                    }
+                }
+                Command::AddLayout(layout) => {
+                    if let Some(editor) = self.active_editor_mut() {
+                        editor.ed.add_layout(layout);
+                    }
+                }
+                Command::AddAnnotation(kind) => {
+                    if let Some(editor) = self.active_editor_mut() {
+                        editor.ed.add_annotation(kind);
+                    }
+                }
+                Command::Help => {
+                    let _ = crate::editor::open_url("https://github.com/MarshallNickolauson/ScreenCraft#readme");
+                }
+                Command::ReportProblem => {
+                    let _ = crate::editor::open_url("https://github.com/MarshallNickolauson/ScreenCraft/issues");
+                }
+            }
+        }
+
+        let (can_save, can_undo, can_redo) = self.active_editor_mut().map_or((false, false, false), |editor| {
+            (true, editor.ed.can_undo(), editor.ed.can_redo())
+        });
+        if let Some(menu) = self.native_menu.as_ref() {
+            menu.update(matches!(self.rec.phase, Phase::Recording | Phase::Countdown), can_save, can_undo, can_redo);
         }
     }
 
@@ -431,6 +549,11 @@ impl eframe::App for App {
     }
 
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        #[cfg(target_os = "macos")]
+        if self.native_menu.is_none() {
+            self.native_menu = Some(crate::macos_menu::NativeMenu::install(ctx.clone()));
+        }
+
         #[cfg(windows)]
         if self.native_window.is_none() {
             use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -515,9 +638,11 @@ impl App {
             let (id, title) = (self.editors[i].id, self.editors[i].title.clone());
             let builder = ViewportBuilder::default().with_title(title).with_inner_size([1440.0, 900.0]).with_min_inner_size([980.0, 620.0]);
             let mut close = false;
+            let mut focused = false;
             {
                 let ed = &mut self.editors[i].ed;
                 ctx.show_viewport_immediate(id, builder, |ui, _class| {
+                    focused = ui.ctx().input(|input| input.viewport().focused.unwrap_or(false));
                     ed.ui(ui);
                     if ui.ctx().input(|i| i.viewport().close_requested()) {
                         if ed.dirty {
@@ -534,6 +659,9 @@ impl App {
                         compress_requests.push(req);
                     }
                 });
+            }
+            if focused {
+                self.active_editor = Some(id);
             }
             let title = format!("{}{}", self.editors[i].ed.project.name, if self.editors[i].ed.dirty { " *" } else { "" });
             if title != self.editors[i].title {
@@ -566,6 +694,9 @@ impl App {
                 let mut w = self.editors.remove(i);
                 w.ed.pause();
                 w.ed.save_now();
+                if self.active_editor == Some(id) {
+                    self.active_editor = self.editors.last().map(|editor| editor.id);
+                }
             } else {
                 i += 1;
             }
