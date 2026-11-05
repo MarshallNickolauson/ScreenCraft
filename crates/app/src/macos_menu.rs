@@ -11,7 +11,7 @@ pub fn configure_event_loop(builder: &mut eframe::EventLoopBuilder<eframe::UserE
 }
 
 #[derive(Clone, Copy)]
-pub enum Command {
+pub(super) enum Command {
     NewRecording,
     OpenProject,
     Save,
@@ -30,7 +30,7 @@ pub enum Command {
     ReportProblem,
 }
 
-pub struct NativeMenu {
+pub(super) struct NativeMenu {
     _menu: Menu,
     events: Receiver<MenuId>,
     commands: HashMap<MenuId, Command>,
@@ -50,7 +50,7 @@ pub struct NativeMenu {
 }
 
 impl NativeMenu {
-    pub fn install(ctx: Context) -> Self {
+    pub(super) fn install(ctx: Context) -> Self {
         let mut commands = HashMap::new();
 
         let about = PredefinedMenuItem::about(
@@ -375,7 +375,7 @@ impl NativeMenu {
         }
     }
 
-    pub fn poll(&self) -> Vec<Command> {
+    pub(super) fn poll(&self) -> Vec<Command> {
         let mut out = Vec::new();
         while let Ok(id) = self.events.try_recv() {
             if let Some(command) = self.commands.get(&id) {
@@ -385,7 +385,7 @@ impl NativeMenu {
         out
     }
 
-    pub fn update(&self, recording: bool, can_save: bool, can_undo: bool, can_redo: bool) {
+    pub(super) fn update(&self, recording: bool, can_save: bool, can_undo: bool, can_redo: bool) {
         self.record.set_text(if recording {
             "Stop Recording"
         } else {

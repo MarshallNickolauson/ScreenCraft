@@ -411,7 +411,7 @@ impl EditorState {
         }
     }
 
-    pub fn can_undo(&self) -> bool {
+    pub(crate) fn can_undo(&self) -> bool {
         !self.undo.is_empty()
     }
 
@@ -423,7 +423,7 @@ impl EditorState {
         }
     }
 
-    pub fn can_redo(&self) -> bool {
+    pub(crate) fn can_redo(&self) -> bool {
         !self.redo.is_empty()
     }
 
@@ -1028,7 +1028,7 @@ impl EditorState {
         }
     }
 
-    pub fn select_all(&mut self) {
+    pub(crate) fn select_all(&mut self) {
         if self.tab == Tab::Captions {
             let ids: Vec<String> = self.project.scene.subtitles.iter().map(|c| c.id.clone()).collect();
             if let Some(f) = ids.first().cloned() {
