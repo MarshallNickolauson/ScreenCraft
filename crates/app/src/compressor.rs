@@ -189,7 +189,10 @@ impl Compressor {
                 .frame(egui::Frame::new().fill(BG).inner_margin(egui::Margin { left: 26, right: 26, top: 22, bottom: 18 }))
                 .show_inside(ui, |ui| {
                     ui.spacing_mut().item_spacing = Vec2::new(8.0, 12.0);
-                    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height((ui.available_height() - 52.0).max(0.0))
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
                         ui.label(egui::RichText::new("Compress video").size(21.0).strong().color(TEXT));
                         ui.label(egui::RichText::new("Choose a preset or adjust the output settings.").size(13.0).color(MUTED));
 

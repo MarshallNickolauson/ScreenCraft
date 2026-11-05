@@ -27,7 +27,10 @@ pub fn show(ctx: &egui::Context, rec: &mut Recorder) -> bool {
             .frame(egui::Frame::new().fill(BG).inner_margin(egui::Margin { left: 28, right: 28, top: 24, bottom: 20 }))
             .show_inside(ui, |ui| {
                 ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
-                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .max_height((ui.available_height() - 48.0).max(0.0))
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
                     ui.label(egui::RichText::new("Set up ScreenCraft").size(22.0).strong().color(TEXT));
                     ui.add(
                         egui::Label::new(
