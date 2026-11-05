@@ -541,6 +541,10 @@ pub struct Styles {
     pub device: String,
 }
 
+pub const SCREEN_SCALE_MIN: f64 = 0.25;
+pub const SCREEN_SCALE_MAX: f64 = 3.0;
+pub const SCREEN_OFFSET_LIMIT: f64 = 1.0;
+
 impl Default for Styles {
     fn default() -> Self {
         Self {

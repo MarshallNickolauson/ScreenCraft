@@ -3,7 +3,7 @@
 //! compositor.
 
 use crate::scene::content_aspect;
-use screencraft_core::project::{CameraConfig, Project};
+use screencraft_core::project::{CameraConfig, Project, SCREEN_OFFSET_LIMIT, SCREEN_SCALE_MAX, SCREEN_SCALE_MIN};
 
 pub type R = [f32; 4]; // x, y, w, h
 
@@ -146,12 +146,11 @@ pub fn frame_geo(p: &Project, track: &screencraft_core::track::RenderTrack, i: u
 }
 
 fn transform_screen(geo: &mut Geo, p: &Project, w: f32, h: f32) {
-    let scale = p.config.styles.screen_scale.clamp(0.25, 3.0) as f32;
-    let x = p.config.styles.screen_offset.x.clamp(-1.0, 1.0) as f32 * w;
-    let y = p.config.styles.screen_offset.y.clamp(-1.0, 1.0) as f32 * h;
+    let scale = p.config.styles.screen_scale.clamp(SCREEN_SCALE_MIN, SCREEN_SCALE_MAX) as f32;
+    let x = p.config.styles.screen_offset.x.clamp(-SCREEN_OFFSET_LIMIT, SCREEN_OFFSET_LIMIT) as f32 * w;
+    let y = p.config.styles.screen_offset.y.clamp(-SCREEN_OFFSET_LIMIT, SCREEN_OFFSET_LIMIT) as f32 * h;
     geo.sr[0] += x + geo.sr[2] * (1.0 - scale) * 0.5;
     geo.sr[1] += y + geo.sr[3] * (1.0 - scale) * 0.5;
     geo.sr[2] *= scale;
     geo.sr[3] *= scale;
-    geo.rad *= scale;
 }

@@ -214,7 +214,8 @@ pub fn build_scene_with(p: &Project, track: &RenderTrack, i: usize, out: (u32, u
     let t_out_ms = i as f64 * 1000.0 / track.fps.max(1.0);
     let cfg = &p.config.cursor;
     // a device's screen has corners of its own
-    let corner = crate::devices::screen_radius(&st.device, st.corner_radius as f32 * s, content[3]);
+    let corner = crate::devices::screen_radius(&st.device, st.corner_radius as f32 * s, content[3])
+        * st.screen_scale.clamp(screencraft_core::project::SCREEN_SCALE_MIN, screencraft_core::project::SCREEN_SCALE_MAX) as f32;
 
     // Points (recording units) to output px, through the camera.
     let rec_h_pts = (crop.height * p.media.bounds.height).max(1.0);
