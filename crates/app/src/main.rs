@@ -13,7 +13,7 @@ fn icon() -> eframe::egui::IconData {
 }
 
 fn main() -> eframe::Result {
-    let options = eframe::NativeOptions {
+    let mut options = eframe::NativeOptions {
         // The recorder bar: borderless, transparent, always on top, bottom-centre of the display.
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("ScreenCraft")
@@ -27,5 +27,9 @@ fn main() -> eframe::Result {
         renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };
+    #[cfg(target_os = "macos")]
+    {
+        options.event_loop_builder = Some(Box::new(screencraft::configure_macos_event_loop));
+    }
     eframe::run_native("ScreenCraft", options, Box::new(|cc| Ok(Box::new(screencraft::app::App::new(cc)))))
 }

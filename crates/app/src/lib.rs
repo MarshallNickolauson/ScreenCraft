@@ -17,3 +17,9 @@ pub mod srt;
 pub mod whisper;
 pub mod theme;
 pub mod updates;
+
+#[cfg(target_os = "macos")]
+mod macos_menu;
+
+#[cfg(target_os = "macos")]
+pub use macos_menu::configure_event_loop as configure_macos_event_loop;

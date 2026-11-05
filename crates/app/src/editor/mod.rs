@@ -411,12 +411,20 @@ impl EditorState {
         }
     }
 
+    pub fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
+    }
+
     pub fn redo(&mut self) {
         if let Some(p) = self.redo.pop() {
             self.undo.push(std::mem::replace(&mut self.project, p));
             self.sel = Sel::None;
             self.changed();
         }
+    }
+
+    pub fn can_redo(&self) -> bool {
+        !self.redo.is_empty()
     }
 
     pub fn save_now(&mut self) {
@@ -1020,7 +1028,7 @@ impl EditorState {
         }
     }
 
-    fn select_all(&mut self) {
+    pub fn select_all(&mut self) {
         if self.tab == Tab::Captions {
             let ids: Vec<String> = self.project.scene.subtitles.iter().map(|c| c.id.clone()).collect();
             if let Some(f) = ids.first().cloned() {
