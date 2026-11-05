@@ -92,6 +92,10 @@ fn zoom_to_rng(z: f64) -> f64 {
     z.ln() / ZOOM_MAX.ln() * 100.0
 }
 
+fn interaction_origin(response: &egui::Response) -> Option<Pos2> {
+    response.ctx.input(|i| i.pointer.press_origin()).or_else(|| response.interact_pointer_pos())
+}
+
 fn x_text(k: f64) -> String {
     format!("{}×", (k * 100.0).round() / 100.0)
 }
@@ -607,7 +611,7 @@ fn body(st: &mut EditorState, ui: &mut egui::Ui) {
 
     let preview_now = st.timeline.preview.clone();
     if resp_all.drag_started() || (resp_all.clicked() && st.timeline.drag.is_none()) {
-        if let Some(pos) = pointer {
+        if let Some(pos) = interaction_origin(&resp_all) {
             let in_tracks = pos.x >= tracks_left;
             let in_ruler = pos.y < body_rect.min.y - v_off + RULER_H + 1.0;
             if !in_tracks {
@@ -924,6 +928,54 @@ fn body(st: &mut EditorState, ui: &mut egui::Ui) {
 }
 
 fn finish(_st: &mut EditorState, _ui: &mut egui::Ui, _b: &[Block], _v: f32) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frame(ctx: &egui::Context, events: Vec<egui::Event>) -> egui::Response {
+        let mut response = None;
+        let _ = ctx.run_ui(egui::RawInput { events, ..Default::default() }, |ui| {
+            response = Some(ui.interact(
+                Rect::from_min_size(Pos2::ZERO, Vec2::splat(500.0)),
+                ui.id().with("timeline"),
+                Sense::click_and_drag(),
+            ));
+        });
+        response.unwrap()
+    }
+
+    fn button(pos: Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() }
+    }
+
+    #[test]
+    fn trim_drag_uses_press_position_after_leaving_the_handle() {
+        for (press_x, drag_x) in [(105.0, 130.0), (295.0, 270.0), (295.0, 330.0)] {
+            let ctx = egui::Context::default();
+            let press = Pos2::new(press_x, 100.0);
+            let drag = Pos2::new(drag_x, 100.0);
+            frame(&ctx, vec![]);
+            let pressed = frame(&ctx, vec![egui::Event::PointerMoved(press), button(press, true)]);
+            assert!(!pressed.drag_started());
+            let moved = frame(&ctx, vec![egui::Event::PointerMoved(drag)]);
+            assert!(moved.drag_started());
+            assert_eq!(moved.interact_pointer_pos(), Some(drag));
+            assert_eq!(interaction_origin(&moved), Some(press));
+        }
+    }
+
+    #[test]
+    fn click_uses_release_position() {
+        let ctx = egui::Context::default();
+        let pos = Pos2::new(200.0, 100.0);
+        frame(&ctx, vec![]);
+        frame(&ctx, vec![egui::Event::PointerMoved(pos), button(pos, true)]);
+        let released = frame(&ctx, vec![button(pos, false)]);
+        assert!(released.clicked());
+        assert_eq!(interaction_origin(&released), Some(pos));
+    }
+}
 
 fn paint_block(ui: &egui::Ui, p: &egui::Painter, b: &Block, r: Rect, dragging: bool) {
     let cr = CornerRadius::same(6);
