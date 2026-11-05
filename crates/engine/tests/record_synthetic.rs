@@ -12,6 +12,39 @@ mod common;
 use common::Synthetic;
 
 #[test]
+fn saves_a_recording_when_capture_ends_before_stop() {
+    let dir = std::env::temp_dir().join(format!("sc-engine-ended-{}", std::process::id()));
+    let package = Package::open(dir.join("t.screencraft"));
+    let stopped = Arc::new(AtomicBool::new(false));
+    let rec = Recording::start_with(
+        RecordOptions {
+            target: Target::Display(None),
+            fps: 30,
+            max_long_side: None,
+            system_audio: true,
+            microphone: false,
+            microphone_id: None,
+            output: package.clone(),
+            camera: None,
+            bitrate_kbps: Some(4000),
+            hardware: screencraft_encode::HwPreference::Software,
+        },
+        Box::new(Synthetic { stop: stopped.clone(), thread: None }),
+    )
+    .expect("start");
+    std::thread::sleep(Duration::from_millis(200));
+    stopped.store(true, std::sync::atomic::Ordering::SeqCst);
+    // Let the capture channel close and the worker finalize before asking to stop.
+    std::thread::sleep(Duration::from_secs(1));
+    let done = rec.stop().expect("save after capture ended");
+    assert!(done.frames > 0);
+    let project = package.load_project().expect("saved project");
+    let video = VideoSource::open(&package.screen_path(&project)).expect("playable video");
+    assert_eq!(video.frame_count as u64, done.frames);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn records_a_synthetic_screen_into_a_package() {
     let dir = std::env::temp_dir().join(format!("sc-engine-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
