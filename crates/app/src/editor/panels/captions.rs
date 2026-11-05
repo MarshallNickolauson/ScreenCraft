@@ -55,6 +55,13 @@ const MODELS: [(&str, &str); 5] = [
     ("base", "Multilingual · 148 MB"),
 ];
 
+#[derive(Clone, Copy)]
+enum CaptionsSection {
+    AutoCaptions,
+    Content,
+    Style,
+}
+
 pub struct CapState {
     pub model: String,
     pub language: String,
@@ -102,8 +109,34 @@ pub fn show(st: &mut EditorState, ui: &mut Ui) {
     }
     let mut list = st.project.scene.subtitles.clone();
     list.sort_by(|a, b| a.source_start_ms.partial_cmp(&b.source_start_ms).unwrap());
+    let cap = if let Sel::Caption(id) = &st.sel { list.iter().find(|c| &c.id == id).cloned() } else { None };
+    let multi = st.selected_caption_ids();
     kit::h3(ui, "Captions", true);
     note(ui, "Type captions or import an SRT file. They sit in the middle of the bottom third of the video, like TikTok.");
+    let mut jump_to: Option<CaptionsSection> = None;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        ui.label(egui::RichText::new("Jump to").size(13.0).color(crate::theme::MUTED));
+        if kit::pill(ui, None, "Auto captions", false, false, false, None).clicked() {
+            jump_to = Some(CaptionsSection::AutoCaptions);
+        }
+        let content_label = if cap.is_some() || multi.len() > 1 {
+            Some("Selected caption")
+        } else if !list.is_empty() {
+            Some("Caption list")
+        } else {
+            None
+        };
+        if let Some(label) = content_label {
+            if kit::pill(ui, None, label, false, false, false, None).clicked() {
+                jump_to = Some(CaptionsSection::Content);
+            }
+        }
+        if kit::pill(ui, None, "Style", false, false, false, None).clicked() {
+            jump_to = Some(CaptionsSection::Style);
+        }
+    });
+    let auto_section = section_marker(ui);
     // on-device speech recognition (whisper.cpp); runs locally, nothing is uploaded
     kit::h3(ui, "Auto captions", false);
     note(ui, "Transcribes the microphone on this computer with whisper.cpp. The first run downloads the model you pick (once); the audio never leaves your machine.");
@@ -143,8 +176,7 @@ pub fn show(st: &mut EditorState, ui: &mut Ui) {
         }
     });
 
-    let cap = if let Sel::Caption(id) = &st.sel { list.iter().find(|c| &c.id == id).cloned() } else { None };
-    let multi = st.selected_caption_ids();
+    let content_section = section_marker(ui);
     if cap.is_some() && multi.len() > 1 {
         kit::h3(ui, &format!("{} captions selected", multi.len()), false);
         kit::hint(ui, "Drag any selected caption to move them all together. ⌘ / Ctrl-click adds or removes one, Shift-click selects a range, ⌘ / Ctrl + A selects all.");
@@ -184,6 +216,7 @@ pub fn show(st: &mut EditorState, ui: &mut Ui) {
         }
     }
 
+    let style_section = section_marker(ui);
     kit::h3(ui, "Style", false);
     let presets: Vec<(String, &str)> = vec![("tiktok".into(), "TikTok"), ("classic".into(), "Classic"), ("minimal".into(), "Minimal")];
     seg(st, ui, Some("Preset"), &presets, sty.style.clone(), |p, v| preset(&v, &mut p.config.subtitles));
@@ -203,5 +236,18 @@ pub fn show(st: &mut EditorState, ui: &mut Ui) {
     toggle(st, ui, "Capital letters", None, sty.uppercase, |p, v| p.config.subtitles.uppercase = v);
     toggle(st, ui, "Pop in", Some("A quick bounce when each caption appears."), sty.pop, |p, v| p.config.subtitles.pop = v);
     toggle(st, ui, "Box behind text", None, !sty.background.is_empty(), |p, v| p.config.subtitles.background = if v { "#000000b3".into() } else { String::new() });
+    if let Some(target) = jump_to {
+        let rect = match target {
+            CaptionsSection::AutoCaptions => auto_section,
+            CaptionsSection::Content => content_section,
+            CaptionsSection::Style => style_section,
+        };
+        ui.scroll_to_rect(rect, Some(egui::Align::Min));
+    }
     let _ = srt::parse;
+}
+
+fn section_marker(ui: &Ui) -> egui::Rect {
+    let cursor = ui.cursor();
+    egui::Rect::from_min_size(cursor.min, egui::vec2(cursor.width(), 1.0))
 }
