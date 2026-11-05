@@ -208,6 +208,19 @@ pub struct Menu {
     search_focus_pending: bool,
 }
 
+impl Menu {
+    fn new(kind: MenuKind, items: Vec<MenuItem>, left: f32) -> Self {
+        Self {
+            kind,
+            items,
+            left,
+            filter: String::new(),
+            selected: None,
+            search_focus_pending: kind.is_searchable(),
+        }
+    }
+}
+
 /// What the bar asks the application to do.
 pub enum Action {
     None,
@@ -444,14 +457,7 @@ impl Recorder {
             MenuKind::Camera => self.camera_items(prefs),
             _ => self.folder_items(prefs),
         };
-        Menu {
-            kind,
-            items,
-            left: 640.0,
-            filter: String::new(),
-            selected: None,
-            search_focus_pending: kind.is_searchable(),
-        }
+        Menu::new(kind, items, 640.0)
     }
 
     pub fn close_menu(&mut self) {
@@ -467,14 +473,7 @@ impl Recorder {
                 return;
             }
         }
-        self.menu = Some(Menu {
-            kind,
-            items,
-            left,
-            filter: String::new(),
-            selected: None,
-            search_focus_pending: kind.is_searchable(),
-        });
+        self.menu = Some(Menu::new(kind, items, left));
     }
 
     fn toggle_menu(&mut self, kind: MenuKind, items: Vec<MenuItem>, left: f32) {
@@ -1133,8 +1132,10 @@ impl Recorder {
                 action = Action::HoverWindow(None);
             }
         } else {
-            let outside = ui.ctx().input(|input| input.pointer.any_pressed())
-                && ui.ctx().input(|input| input.pointer.interact_pos()).map(|position| !rect.contains(position)).unwrap_or(false);
+            let outside = ui.ctx().input(|input| {
+                input.pointer.any_pressed()
+                    && input.pointer.interact_pos().is_some_and(|position| !rect.contains(position))
+            });
             if outside {
                 self.close_menu();
                 action = Action::HoverWindow(None);
