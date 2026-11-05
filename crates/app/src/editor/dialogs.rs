@@ -557,6 +557,17 @@ fn about(st: &mut EditorState, ctx: &egui::Context) {
                     ui.spacing_mut().item_spacing.y = 2.0;
                     ui.label(egui::RichText::new("ScreenCraft").size(22.0).color(TEXT));
                     ui.label(egui::RichText::new(format!("Version {}", updates::VERSION)).size(12.0).color(MUTED));
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 10.0;
+                        ui.label(egui::RichText::new("Links").size(11.0).color(MUTED));
+                        for (label, url) in [
+                            ("X", "https://x.com/mdnlabs"),
+                            ("GitHub", "https://github.com/MarshallNickolauson/ScreenCraft"),
+                            ("Report an issue", "https://github.com/MarshallNickolauson/ScreenCraft/issues"),
+                        ] {
+                            ui.add(egui::Hyperlink::from_label_and_url(egui::RichText::new(label).size(12.5).color(ACCENT_2), url));
+                        }
+                    });
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
                     if kit::icon_btn(ui, "close", "Close").clicked() {
@@ -654,7 +665,6 @@ fn about(st: &mut EditorState, ctx: &egui::Context) {
                             ("Privacy policy", "https://screencraft.mdnlabs.dev/privacy"),
                             ("What is stored and where", "https://screencraft.mdnlabs.dev/docs/privacy-and-data"),
                             ("Third-party notices", "https://screencraft.mdnlabs.dev/third-party-notices"),
-                            ("Source code (MIT)", "https://github.com/MarshallNickolauson/ScreenCraft"),
                         ] {
                             if ui.add(egui::Label::new(egui::RichText::new(t).size(12.5).color(ACCENT_2)).sense(Sense::click())).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                                 let _ = open_url(u);

@@ -1177,17 +1177,6 @@ impl EditorState {
     fn top_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_centered(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
-            for (name, tip, url) in [
-                ("x", "ScreenCraft on X (@mdnlabs)", "https://x.com/mdnlabs"),
-                ("github", "ScreenCraft on GitHub", "https://github.com/MarshallNickolauson/ScreenCraft"),
-                ("bug", "Report a bug or request a feature", "https://github.com/MarshallNickolauson/ScreenCraft/issues"),
-            ] {
-                if kit::icon_btn_sized(ui, name, tip, 32.0, 17.0, true).clicked() {
-                    let _ = open_url(url);
-                }
-            }
-            ui.add_space(2.0);
-            // Projects button
             let tw = kit::text_width(ui, "Projects", 13.0);
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(tw + 10.0 * 2.0 + 16.0 + 8.0, 32.0), Sense::click());
             if resp.hovered() {
