@@ -1177,7 +1177,6 @@ impl EditorState {
     fn top_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_centered(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
-            // Projects button
             let tw = kit::text_width(ui, "Projects", 13.0);
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(tw + 10.0 * 2.0 + 16.0 + 8.0, 32.0), Sense::click());
             if resp.hovered() {
