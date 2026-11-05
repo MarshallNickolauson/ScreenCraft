@@ -529,6 +529,10 @@ impl Default for Background {
 #[serde(rename_all = "camelCase", default)]
 pub struct Styles {
     pub padding_ratio: f64,
+    /// Uniform scale of the screen picture inside the output frame.
+    pub screen_scale: f64,
+    /// Screen-picture offset from its layout position, relative to output width and height.
+    pub screen_offset: Point,
     pub corner_radius: f64,
     pub shadow: Shadow,
     pub inset: Inset,
@@ -537,10 +541,16 @@ pub struct Styles {
     pub device: String,
 }
 
+pub const SCREEN_SCALE_MIN: f64 = 0.25;
+pub const SCREEN_SCALE_MAX: f64 = 3.0;
+pub const SCREEN_OFFSET_LIMIT: f64 = 1.0;
+
 impl Default for Styles {
     fn default() -> Self {
         Self {
             padding_ratio: 0.02,
+            screen_scale: 1.0,
+            screen_offset: Point::default(),
             corner_radius: 16.0,
             shadow: Shadow::default(),
             inset: Inset::default(),

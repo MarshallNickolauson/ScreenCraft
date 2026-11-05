@@ -3,7 +3,7 @@
 //! compositor.
 
 use crate::scene::content_aspect;
-use screencraft_core::project::{CameraConfig, Project};
+use screencraft_core::project::{CameraConfig, Project, SCREEN_OFFSET_LIMIT, SCREEN_SCALE_MAX, SCREEN_SCALE_MIN};
 
 pub type R = [f32; 4]; // x, y, w, h
 
@@ -133,11 +133,24 @@ pub fn frame_geo(p: &Project, track: &screencraft_core::track::RenderTrack, i: u
     let g_cur = layout_geom(cur_id, &cam_settings(p, cur_idx), p, w, h, r, zoom, has_cam);
     let mix = track.layout_mix.get(i).copied().unwrap_or(1.0) as f32;
     let t = smooth(mix.clamp(0.0, 1.0));
-    let geo = if t >= 1.0 || (prev_id == cur_id && prev_idx == cur_idx) {
+    let mut geo = if t >= 1.0 || (prev_id == cur_id && prev_idx == cur_idx) {
         g_cur
     } else {
         let g_prev = layout_geom(prev_id, &cam_settings(p, prev_idx), p, w, h, r, zoom, has_cam);
         mix_geo(&g_prev, &g_cur, t)
     };
+    transform_screen(&mut geo, p, w, h);
+    let mut g_cur = g_cur;
+    transform_screen(&mut g_cur, p, w, h);
     (geo, g_cur)
+}
+
+fn transform_screen(geo: &mut Geo, p: &Project, w: f32, h: f32) {
+    let scale = p.config.styles.screen_scale.clamp(SCREEN_SCALE_MIN, SCREEN_SCALE_MAX) as f32;
+    let x = p.config.styles.screen_offset.x.clamp(-SCREEN_OFFSET_LIMIT, SCREEN_OFFSET_LIMIT) as f32 * w;
+    let y = p.config.styles.screen_offset.y.clamp(-SCREEN_OFFSET_LIMIT, SCREEN_OFFSET_LIMIT) as f32 * h;
+    geo.sr[0] += x + geo.sr[2] * (1.0 - scale) * 0.5;
+    geo.sr[1] += y + geo.sr[3] * (1.0 - scale) * 0.5;
+    geo.sr[2] *= scale;
+    geo.sr[3] *= scale;
 }
