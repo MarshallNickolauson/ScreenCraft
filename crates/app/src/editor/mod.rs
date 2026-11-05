@@ -122,7 +122,7 @@ struct ScreenDrag {
     start_pointer: Pos2,
     start_rect: Rect,
     start_scale: f64,
-    start_offset: (f64, f64),
+    start_offset: screencraft_core::project::Point,
 }
 
 /// Preview frame rate of the render track (editing); exports use their own.
@@ -1453,50 +1453,50 @@ impl EditorState {
         }
     }
 
-    /// Hit areas and outlines drawn over the preview: the zoom-target marker and annotation handles.
+    /// Hit areas and guides for items that can be edited directly in the preview.
     fn draw_preview_overlays(&mut self, ui: &mut egui::Ui, i: usize) {
         let Some(content) = self.preview_content else { return };
         if self.tab == Tab::Crop || matches!(&self.sel, Sel::None | Sel::Slice(_)) {
             self.screen_handles(ui, content);
         }
         if self.tab != Tab::Crop {
-            // Manual zoom target picker.
-            if let Sel::Zoom(id) = self.sel.clone() {
-                let zi = self.project.scene.zooms.iter().position(|z| z.id == id);
-                let manual = zi
-                    .map(|k| self.project.scene.zooms[k].kind == screencraft_core::project::ZoomKind::Manual)
-                    .unwrap_or(false);
-                if let (Some(zi), true) = (zi, manual) {
-                    let resp = ui.interact(content, ui.id().with("zoom-target"), Sense::click_and_drag());
-                    if resp.dragged() || resp.clicked() {
-                        if let Some(pos) = resp.interact_pointer_pos() {
-                            let local = ((pos - content.min) / content.size()).clamp(Vec2::ZERO, Vec2::splat(1.0));
-                            let c = self.project.config.crop;
-                            let (cx, cy, z) = (self.track.cx[i], self.track.cy[i], self.track.zoom[i]);
-                            let sx = cx + (local.x as f64 - 0.5) * c.width / z;
-                            let sy = cy + (local.y as f64 - 0.5) * c.height / z;
-                            self.edit_keyed(Some("zoom-target"), |pr| {
-                                if let Some(zr) = pr.scene.zooms.get_mut(zi) {
-                                    zr.manual_target_point.x = sx.clamp(0.0, 1.0);
-                                    zr.manual_target_point.y = sy.clamp(0.0, 1.0);
-                                }
-                            });
-                        }
-                    }
-                    if let Some(z) = self.project.scene.zooms.get(zi) {
-                        let c = self.project.config.crop;
-                        let (cx, cy, zz) = (self.track.cx[i], self.track.cy[i], self.track.zoom[i]);
-                        let lx = (z.manual_target_point.x - cx) * zz / c.width + 0.5;
-                        let ly = (z.manual_target_point.y - cy) * zz / c.height + 0.5;
-                        if (0.0..=1.0).contains(&lx) && (0.0..=1.0).contains(&ly) {
-                            let pt = content.min + Vec2::new(lx as f32 * content.width(), ly as f32 * content.height());
-                            ui.painter().circle_stroke(pt, 13.0, Stroke::new(2.0, Color32::WHITE));
-                            ui.painter().circle_stroke(pt, 14.5, Stroke::new(2.0, ACCENT));
-                        }
-                    }
-                }
-            }
+            self.zoom_target_handles(ui, content, i);
             self.annotation_handles(ui);
+        }
+    }
+
+    fn zoom_target_handles(&mut self, ui: &mut egui::Ui, content: Rect, track_index: usize) {
+        let Sel::Zoom(id) = &self.sel else { return };
+        let Some(zoom_index) = self.project.scene.zooms.iter().position(|zoom| &zoom.id == id) else { return };
+        if self.project.scene.zooms[zoom_index].kind != screencraft_core::project::ZoomKind::Manual {
+            return;
+        }
+
+        let response = ui.interact(content, ui.id().with("zoom-target"), Sense::click_and_drag());
+        let crop = self.project.config.crop;
+        let (cx, cy, zoom) = (
+            self.track.cx[track_index],
+            self.track.cy[track_index],
+            self.track.zoom[track_index],
+        );
+        if let Some(pos) = response.interact_pointer_pos().filter(|_| response.dragged() || response.clicked()) {
+            let local = ((pos - content.min) / content.size()).clamp(Vec2::ZERO, Vec2::splat(1.0));
+            let target_x = (cx + (local.x as f64 - 0.5) * crop.width / zoom).clamp(0.0, 1.0);
+            let target_y = (cy + (local.y as f64 - 0.5) * crop.height / zoom).clamp(0.0, 1.0);
+            self.edit_keyed(Some("zoom-target"), |project| {
+                let target = &mut project.scene.zooms[zoom_index].manual_target_point;
+                target.x = target_x;
+                target.y = target_y;
+            });
+        }
+
+        let target = self.project.scene.zooms[zoom_index].manual_target_point;
+        let local_x = (target.x - cx) * zoom / crop.width + 0.5;
+        let local_y = (target.y - cy) * zoom / crop.height + 0.5;
+        if (0.0..=1.0).contains(&local_x) && (0.0..=1.0).contains(&local_y) {
+            let point = content.min + Vec2::new(local_x as f32 * content.width(), local_y as f32 * content.height());
+            ui.painter().circle_stroke(point, 13.0, Stroke::new(2.0, Color32::WHITE));
+            ui.painter().circle_stroke(point, 14.5, Stroke::new(2.0, ACCENT));
         }
     }
 
@@ -1528,7 +1528,7 @@ impl EditorState {
                     start_pointer: pos,
                     start_rect: content,
                     start_scale: self.project.config.styles.screen_scale,
-                    start_offset: (self.project.config.styles.screen_offset.x, self.project.config.styles.screen_offset.y),
+                    start_offset: self.project.config.styles.screen_offset,
                 });
                 self.tab = Tab::Crop;
             }
@@ -1549,13 +1549,12 @@ impl EditorState {
                     let scale = (drag.start_scale * (1.0 + change)).clamp(0.25, 3.0);
                     self.edit_keyed(Some("screen-frame"), |p| p.config.styles.screen_scale = scale);
                 } else {
-                    let offset = (
-                        (drag.start_offset.0 + dx / shown.width() as f64).clamp(-1.0, 1.0),
-                        (drag.start_offset.1 + dy / shown.height() as f64).clamp(-1.0, 1.0),
-                    );
+                    let offset = screencraft_core::project::Point {
+                        x: (drag.start_offset.x + dx / shown.width() as f64).clamp(-1.0, 1.0),
+                        y: (drag.start_offset.y + dy / shown.height() as f64).clamp(-1.0, 1.0),
+                    };
                     self.edit_keyed(Some("screen-frame"), |p| {
-                        p.config.styles.screen_offset.x = offset.0;
-                        p.config.styles.screen_offset.y = offset.1;
+                        p.config.styles.screen_offset = offset;
                     });
                 }
             }
