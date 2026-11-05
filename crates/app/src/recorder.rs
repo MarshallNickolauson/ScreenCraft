@@ -19,6 +19,8 @@ use std::time::{Duration, Instant};
 
 pub const BAR_W: f32 = 1260.0;
 pub const BAR_H: f32 = 76.0;
+const MENU_MAX_HEIGHT: f32 = 300.0;
+const MENU_SEARCH_CHROME: f32 = 79.0;
 
 /// Resolution choices: cap on the long side in px (0 = the display's native resolution).
 pub const RESOLUTIONS: [(u32, &str, &str); 5] = [
@@ -160,11 +162,51 @@ pub enum MenuKind {
     Folder,
 }
 
+impl MenuKind {
+    fn is_searchable(self) -> bool {
+        matches!(self, Self::Windows | Self::Displays | Self::Camera | Self::Mic)
+    }
+
+    fn title(self) -> &'static str {
+        match self {
+            Self::Windows => "Choose a window",
+            Self::Displays => "Choose a display",
+            Self::Camera => "Choose a camera",
+            Self::Mic => "Choose a microphone",
+            _ => "",
+        }
+    }
+
+    fn item_name(self) -> &'static str {
+        match self {
+            Self::Windows => "windows",
+            Self::Displays => "displays",
+            Self::Camera => "cameras",
+            Self::Mic => "microphones",
+            _ => "items",
+        }
+    }
+
+    fn search_hint(self) -> &'static str {
+        match self {
+            Self::Windows => "Filter by app or window name",
+            Self::Displays => "Filter by display name",
+            Self::Camera | Self::Mic => "Filter by device name",
+            _ => "Filter by name",
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct Menu {
     pub kind: MenuKind,
     pub items: Vec<MenuItem>,
     /// Left edge of the menu within the bar window.
     pub left: f32,
+    filter: String,
+    selected: Option<usize>,
+    search_focus_pending: bool,
+    screenshot_fixture: bool,
 }
 
 /// What the bar asks the application to do.
@@ -286,7 +328,7 @@ impl Recorder {
                     self.cameras = c;
                     self.cameras_loaded = true;
                     // a phone plugged in while the menu is open shows up right away
-                    if self.menu.as_ref().map(|m| m.kind == MenuKind::Camera).unwrap_or(false) {
+                    if self.menu.as_ref().map(|m| m.kind == MenuKind::Camera && !m.screenshot_fixture).unwrap_or(false) {
                         let items = self.camera_items(prefs);
                         if let Some(m) = self.menu.as_mut() {
                             m.items = items;
@@ -400,9 +442,51 @@ impl Recorder {
         let items = match kind {
             MenuKind::Quality => self.quality_items(prefs),
             MenuKind::Sys => self.sys_items(prefs),
+            MenuKind::Camera => {
+                let names = [
+                    "Built-in FaceTime HD Camera",
+                    "Continuity Camera — iPhone",
+                    "Blackmagic Web Presenter",
+                    "Logitech BRIO 4K",
+                    "Elgato Facecam",
+                    "OBS Virtual Camera",
+                    "Camo Camera",
+                    "iPhone 16 Pro Camera",
+                    "Studio Display Camera",
+                    "USB Capture Device",
+                    "Meetup Conference Camera",
+                    "Virtual Camera",
+                ];
+                std::iter::once(MenuItem::Header("Camera".into()))
+                    .chain(std::iter::once(MenuItem::Item {
+                        label: "No camera".into(),
+                        sub: String::new(),
+                        checked: false,
+                        action: MenuAction::CameraOff,
+                    }))
+                    .chain(names.iter().enumerate().map(|(i, name)| MenuItem::Item {
+                        label: (*name).into(),
+                        sub: if i == 1 || i == 7 {
+                            "Phone camera".into()
+                        } else {
+                            String::new()
+                        },
+                        checked: false,
+                        action: MenuAction::Camera(format!("sample-{i}"), (*name).into()),
+                    }))
+                    .collect()
+            }
             _ => self.folder_items(prefs),
         };
-        Menu { kind, items, left: 640.0 }
+        Menu {
+            kind,
+            items,
+            left: 640.0,
+            filter: String::new(),
+            selected: None,
+            search_focus_pending: kind.is_searchable(),
+            screenshot_fixture: true,
+        }
     }
 
     pub fn close_menu(&mut self) {
@@ -418,7 +502,15 @@ impl Recorder {
                 return;
             }
         }
-        self.menu = Some(Menu { kind, items, left });
+        self.menu = Some(Menu {
+            kind,
+            items,
+            left,
+            filter: String::new(),
+            selected: None,
+            search_focus_pending: kind.is_searchable(),
+            screenshot_fixture: false,
+        });
     }
 
     fn toggle_menu(&mut self, kind: MenuKind, items: Vec<MenuItem>, left: f32) {
@@ -868,45 +960,182 @@ impl Recorder {
         }
     }
 
-    /// The drop-up menu, rebuilt from live data each frame it is open (device lists arrive late).
+    /// Draw the drop-up menu, refreshing device lists as probes finish.
     fn draw_menu(&mut self, ui: &mut egui::Ui, full: Rect, bar: Rect, prefs: &mut Prefs) -> Action {
-        let Some(kind) = self.menu.as_ref().map(|m| m.kind) else { return Action::None };
-        // refresh the items that depend on late-arriving lists
-        let items = match kind {
-            MenuKind::Camera => Some(self.camera_items(prefs)),
-            MenuKind::Mic => Some(self.mic_items(prefs)),
-            MenuKind::Sys => Some(self.sys_items(prefs)),
-            MenuKind::Quality => Some(self.quality_items(prefs)),
-            _ => None,
+        let Some(kind) = self.menu.as_ref().map(|menu| menu.kind) else {
+            return Action::None;
         };
-        if let (Some(items), Some(m)) = (items, self.menu.as_mut()) {
-            m.items = items;
+        let items = if self.menu.as_ref().map(|menu| menu.screenshot_fixture).unwrap_or(false) {
+            None
+        } else {
+            match kind {
+                MenuKind::Camera => Some(self.camera_items(prefs)),
+                MenuKind::Mic => Some(self.mic_items(prefs)),
+                MenuKind::Sys => Some(self.sys_items(prefs)),
+                MenuKind::Quality => Some(self.quality_items(prefs)),
+                _ => None,
+            }
+        };
+        if let (Some(items), Some(menu)) = (items, self.menu.as_mut()) {
+            menu.items = items;
         }
-        let Some(menu) = self.menu.as_ref() else { return Action::None };
-        let h = menu_height(menu);
-        let w = menu_width(ui, menu);
+        let Some(menu) = self.menu.as_ref().cloned() else {
+            return Action::None;
+        };
+        let h = menu_height(&menu);
+        let w = menu_width(ui, &menu);
         let left = (full.min.x + menu.left).min(full.max.x - w - 8.0).max(full.min.x + 8.0);
         let rect = Rect::from_min_size(Pos2::new(left, bar.min.y - 8.0 - h), Vec2::new(w, h));
         ui.painter().rect_filled(rect.translate(Vec2::new(0.0, 8.0)).expand(2.0), CornerRadius::same(13), Color32::from_black_alpha(60));
         ui.painter().rect_filled(rect, CornerRadius::same(11), Color32::from_rgba_unmultiplied(13, 19, 30, 250));
         ui.painter().rect_stroke(rect, CornerRadius::same(11), Stroke::new(1.0, LINE_2), StrokeKind::Inside);
-        let mut picked: Option<MenuAction> = None;
-        let mut hover_window: Option<u32> = None;
-        let items = menu.items.clone();
+
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(6.0)));
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(&mut child, |ui| {
-            ui.spacing_mut().item_spacing = Vec2::ZERO;
-            for it in &items {
-                match it {
-                    MenuItem::Header(t) => {
+        child.spacing_mut().item_spacing = Vec2::ZERO;
+        let mut keyboard_pick = None;
+        let mut moved_selection = false;
+        let mut escape = false;
+        let mut visible_items = filtered_menu_items(&menu);
+        if kind.is_searchable() {
+            let search_id = child.make_persistent_id(("recorder-menu-search", format!("{kind:?}")));
+            let search_has_focus = child.memory(|memory| memory.has_focus(search_id));
+            let (down, up, enter, close) = child.ctx().input_mut(|input| {
+                (
+                    search_has_focus && input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
+                    search_has_focus && input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
+                    search_has_focus && input.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
+                    input.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
+                )
+            });
+            escape = close;
+
+            let choices: Vec<MenuAction> = visible_items
+                .iter()
+                .filter_map(|item| match item {
+                    MenuItem::Item { action, .. } => Some(action.clone()),
+                    _ => None,
+                })
+                .collect();
+            if down && !choices.is_empty() {
+                let selected = self.menu.as_ref().and_then(|menu| menu.selected);
+                let next = selected.map(|index| (index + 1) % choices.len()).unwrap_or(0);
+                if let Some(menu) = self.menu.as_mut() {
+                    menu.selected = Some(next);
+                }
+                moved_selection = true;
+            } else if up && !choices.is_empty() {
+                let selected = self.menu.as_ref().and_then(|menu| menu.selected);
+                let next = selected.map(|index| index.checked_sub(1).unwrap_or(choices.len() - 1)).unwrap_or(choices.len() - 1);
+                if let Some(menu) = self.menu.as_mut() {
+                    menu.selected = Some(next);
+                }
+                moved_selection = true;
+            } else if enter {
+                keyboard_pick = self.menu.as_ref().and_then(|menu| menu.selected).and_then(|index| choices.get(index).cloned());
+            }
+
+            let (title_rect, _) = child.allocate_exact_size(
+                Vec2::new(child.available_width(), 20.0),
+                Sense::hover(),
+            );
+            child.painter().text(title_rect.left_center() + Vec2::new(8.0, 0.0), Align2::LEFT_CENTER, kind.title(), kit::font(13.0), TEXT);
+            child.add_space(4.0);
+            let search_before = self.menu.as_ref().map(|menu| menu.filter.clone()).unwrap_or_default();
+            let search_width = child.available_width();
+            let search_response = {
+                let menu = self.menu.as_mut().expect("open menu");
+                child.add_sized(
+                    Vec2::new(search_width, 34.0),
+                    egui::TextEdit::singleline(&mut menu.filter)
+                        .id_source(("recorder-menu-search", format!("{kind:?}")))
+                        .hint_text(kind.search_hint())
+                        .text_color(TEXT)
+                        .margin(Vec2::new(9.0, 6.0)),
+                )
+            };
+            if let Some(menu) = self.menu.as_mut() {
+                if menu.search_focus_pending {
+                    search_response.request_focus();
+                    menu.search_focus_pending = false;
+                }
+                if menu.filter != search_before {
+                    menu.selected = None;
+                }
+            }
+            child.add_space(3.0);
+            visible_items = self.menu.as_ref().map(filtered_menu_items).unwrap_or_default();
+            let result_count = visible_items.iter().filter(|item| matches!(item, MenuItem::Item { .. })).count();
+            let (hint_rect, _) = child.allocate_exact_size(
+                Vec2::new(child.available_width(), 14.0),
+                Sense::hover(),
+            );
+            child.painter().text(
+                hint_rect.left_center() + Vec2::new(8.0, 0.0),
+                Align2::LEFT_CENTER,
+                format!("{result_count} {}  ·  ↑↓ move  ·  Enter select  ·  Esc close", kind.item_name()),
+                kit::font(11.0),
+                MUTED,
+            );
+            child.add_space(4.0);
+        }
+
+        let selected_index = self.menu.as_ref().and_then(|menu| menu.selected);
+        let search_chrome = if kind.is_searchable() { MENU_SEARCH_CHROME } else { 0.0 };
+        let list_height = (h - 12.0 - search_chrome).max(42.0);
+        let mut picked = keyboard_pick;
+        let mut hover_window = selected_index.and_then(|index| {
+            visible_items
+                .iter()
+                .filter_map(|item| match item {
+                    MenuItem::Item { action, .. } => Some(action),
+                    MenuItem::Header(_) => None,
+                })
+                .nth(index)
+                .and_then(|action| match action {
+                    MenuAction::PickWindow(id, _) => Some(*id),
+                    _ => None,
+                })
+        });
+        egui::ScrollArea::vertical()
+            .id_salt(("recorder-menu-list", format!("{kind:?}")))
+            .max_height(list_height)
+            .auto_shrink([false, true])
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
+            .show(&mut child, |ui| {
+            if visible_items.is_empty() && kind.is_searchable() {
+                let (r, _) = ui.allocate_exact_size(
+                    Vec2::new(ui.available_width(), 42.0),
+                    Sense::hover(),
+                );
+                ui.painter().text(r.left_center() + Vec2::new(8.0, 0.0), Align2::LEFT_CENTER, "No matches. Try another search.", kit::font(12.0), MUTED);
+            }
+            let mut item_index = 0;
+            for item in &visible_items {
+                match item {
+                    MenuItem::Header(title) => {
                         let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 25.0), Sense::hover());
-                        kit::spaced_text(ui, Pos2::new(r.min.x + 10.0, r.min.y + 9.0), &t.to_uppercase(), 10.0, MUTED, 1.0);
+                        kit::spaced_text(ui, Pos2::new(r.min.x + 10.0, r.min.y + 9.0), &title.to_uppercase(), 10.0, MUTED, 1.0);
                     }
                     MenuItem::Item { label, sub, checked, action } => {
-                        let h = if sub.is_empty() { 34.0 } else { 52.0 };
-                        let (r, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), h), Sense::click());
-                        if resp.hovered() {
-                            ui.painter().rect_filled(r, CornerRadius::same(7), Color32::from_white_alpha(18));
+                        let index = item_index;
+                        item_index += 1;
+                        let row_height = if sub.is_empty() { 34.0 } else { 52.0 };
+                        let (r, response) = ui.allocate_exact_size(
+                            Vec2::new(ui.available_width(), row_height),
+                            Sense::click(),
+                        );
+                        let keyboard_selected = selected_index == Some(index);
+                        if response.hovered() || keyboard_selected {
+                            ui.painter().rect_filled(
+                                r,
+                                CornerRadius::same(7),
+                                Color32::from_white_alpha(if keyboard_selected { 28 } else { 18 }),
+                            );
+                        }
+                        if keyboard_selected && moved_selection {
+                            response.scroll_to_me(Some(egui::Align::Center));
+                        }
+                        if response.hovered() {
                             if let MenuAction::PickWindow(id, _) = action {
                                 hover_window = Some(*id);
                             }
@@ -914,34 +1143,44 @@ impl Recorder {
                         if *checked {
                             ui.painter().text(Pos2::new(r.min.x + 10.0, r.min.y + 17.0), Align2::LEFT_CENTER, "✓", kit::font(13.0), ACCENT_2);
                         }
-                        let ty = if sub.is_empty() { r.center().y } else { r.min.y + 17.0 };
-                        ui.painter().with_clip_rect(r).text(Pos2::new(r.min.x + 26.0, ty), Align2::LEFT_CENTER, label, kit::font(13.0), Color32::from_rgb(0xd5, 0xdc, 0xec));
+                        let text_y = if sub.is_empty() { r.center().y } else { r.min.y + 17.0 };
+                        ui.painter().with_clip_rect(r).text(
+                            Pos2::new(r.min.x + 26.0, text_y),
+                            Align2::LEFT_CENTER,
+                            label,
+                            kit::font(13.0),
+                            Color32::from_rgb(0xd5, 0xdc, 0xec),
+                        );
                         if !sub.is_empty() {
                             ui.painter().with_clip_rect(r).text(Pos2::new(r.min.x + 26.0, r.min.y + 36.0), Align2::LEFT_CENTER, sub, kit::font(11.0), MUTED);
                         }
-                        if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                        if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                             picked = Some(action.clone());
                         }
                     }
                 }
             }
         });
+
         let mut action = Action::None;
-        if let Some(a) = picked {
+        if escape {
             self.close_menu();
-            action = self.apply(a, prefs);
+            action = Action::HoverWindow(None);
+        } else if let Some(picked) = picked {
+            self.close_menu();
+            action = self.apply(picked, prefs);
             if matches!(action, Action::None) {
                 action = Action::HoverWindow(None);
             }
         } else {
-            // a click anywhere else closes it
-            let outside = ui.ctx().input(|i| i.pointer.any_pressed()) && ui.ctx().input(|i| i.pointer.interact_pos()).map(|p| !rect.contains(p)).unwrap_or(false);
+            let outside = ui.ctx().input(|input| input.pointer.any_pressed())
+                && ui.ctx().input(|input| input.pointer.interact_pos()).map(|position| !rect.contains(position)).unwrap_or(false);
             if outside {
                 self.close_menu();
                 action = Action::HoverWindow(None);
             } else if kind == MenuKind::Windows {
-                let w = hover_window.and_then(|id| self.windows().iter().find(|w| w.id == id).cloned());
-                action = Action::HoverWindow(w);
+                let window = hover_window.and_then(|id| self.windows().iter().find(|window| window.id == id).cloned());
+                action = Action::HoverWindow(window);
             }
         }
         action
@@ -1158,22 +1397,45 @@ fn opt_button_icon_right(ui: &mut egui::Ui, at: Pos2, label: &str, icon: &str) -
     (r, resp)
 }
 
-fn menu_height(m: &Menu) -> f32 {
-    let content: f32 = m
-        .items
+fn filtered_menu_items(menu: &Menu) -> Vec<MenuItem> {
+    let query = menu.filter.trim().to_lowercase();
+    menu.items
         .iter()
-        .map(|i| match i {
-            MenuItem::Header(_) => 25.0,
-            MenuItem::Item { sub, .. } => {
-                if sub.is_empty() {
-                    34.0
+        .filter_map(|item| match item {
+            MenuItem::Header(_) if menu.kind.is_searchable() => None,
+            MenuItem::Header(_) => Some(item.clone()),
+            MenuItem::Item { label, sub, .. } => {
+                if query.is_empty() || format!("{label} {sub}").to_lowercase().contains(&query) {
+                    Some(item.clone())
                 } else {
-                    52.0
+                    None
                 }
             }
         })
-        .sum();
-    content.min(300.0) + 12.0
+        .collect()
+}
+
+fn menu_height(menu: &Menu) -> f32 {
+    let items = filtered_menu_items(menu);
+    let list_height: f32 = if items.is_empty() && menu.kind.is_searchable() {
+        42.0
+    } else {
+        items
+            .iter()
+            .map(|item| match item {
+                MenuItem::Header(_) => 25.0,
+                MenuItem::Item { sub, .. } => {
+                    if sub.is_empty() {
+                        34.0
+                    } else {
+                        52.0
+                    }
+                }
+            })
+            .sum()
+    };
+    let chrome = if menu.kind.is_searchable() { MENU_SEARCH_CHROME } else { 0.0 };
+    (chrome + list_height.min(MENU_MAX_HEIGHT - 12.0 - chrome) + 12.0).min(MENU_MAX_HEIGHT)
 }
 
 fn menu_width(ui: &egui::Ui, m: &Menu) -> f32 {
