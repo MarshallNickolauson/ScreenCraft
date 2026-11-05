@@ -50,8 +50,18 @@ enum Kind {
 #[derive(Clone)]
 enum Drag {
     Scrub { was_playing: bool },
+    Insert { kind: Kind, start_x: f32, start_ms: f64, end_ms: f64, moved: bool },
     Block { kind: Kind, id: String, mode: Mode, x0: f32, a0: f64, b0: f64, moved: bool, group: bool, music: (f64, f64, f64) },
     Bar { grab: f32 },
+}
+
+#[derive(Clone, Copy)]
+enum ContextAction {
+    Zoom,
+    Layout(&'static str),
+    Annotation(&'static str),
+    Caption,
+    Music,
 }
 
 #[derive(Clone)]
@@ -94,6 +104,10 @@ fn zoom_to_rng(z: f64) -> f64 {
 
 fn x_text(k: f64) -> String {
     format!("{}×", (k * 100.0).round() / 100.0)
+}
+
+fn menu_action(ui: &mut egui::Ui, label: &str, enabled: bool) -> bool {
+    ui.add_enabled(enabled, egui::Button::new(label)).clicked()
 }
 
 pub fn fmt_ruler(t: f64) -> String {
@@ -532,14 +546,17 @@ fn body(st: &mut EditorState, ui: &mut egui::Ui) {
     let hint = |t: usize, text: &str| {
         tpainter.text(Pos2::new(tracks_left + 12.0, ty(t) + track_h(t) / 2.0), Align2::LEFT_CENTER, text, kit::font(11.5), MUTED);
     };
+    if scene.zooms.is_empty() {
+        hint(1, "Drag to add a zoom · Right-click for actions");
+    }
     if scene.camera_layouts.is_empty() {
-        hint(2, "Change how the camera looks over time: add a layout from the Camera tab.");
+        hint(2, "Drag to add a layout · Right-click for layouts");
     }
     if scene.annotations.is_empty() {
-        hint(3, "Text, arrows, blur and spotlight appear here: add them from the Annotate tab.");
+        hint(3, "Drag to add text · Right-click for annotations");
     }
     if scene.subtitles.is_empty() {
-        hint(4, "Captions go here: add them from the Captions tab, or import an SRT.");
+        hint(4, "Drag to add a caption · Right-click for actions");
     }
     let mut add_music_rect = None;
     if scene.music_clips.is_empty() {
@@ -605,16 +622,125 @@ fn body(st: &mut EditorState, ui: &mut egui::Ui) {
         })
     };
 
+    let track_at = |pos: Pos2| -> Option<usize> {
+        (1..6).find(|&track| Rect::from_min_size(Pos2::new(tracks_left, ty(track)), Vec2::new(tracks_w, track_h(track))).contains(pos))
+    };
+    let context_id = ui.id().with("tl-context-track");
+    if resp_all.secondary_clicked() {
+        let target = ui.ctx().input(|i| i.pointer.interact_pos()).and_then(|pos| {
+            if pos.x >= tracks_left { track_at(pos).map(|track| (track, t_of(pos.x))) } else { None }
+        });
+        ui.ctx().data_mut(|data| data.insert_temp(context_id, target.unwrap_or((0, 0.0))));
+    }
+    let mut context_action = None;
+    let mut context_time = 0.0;
+    resp_all.context_menu(|menu| {
+        let (track, time) = menu.ctx().data(|data| data.get_temp::<(usize, f64)>(context_id)).unwrap_or((0, 0.0));
+        if track == 0 {
+            menu.label("Right-click a track to add an item.");
+            return;
+        }
+        context_time = time;
+        menu.label(format!("{} at {}", ["", "Zoom", "Camera", "Notes", "Captions", "Music"][track], fmt_ruler(time)));
+        match track {
+            1 => {
+                if menu_action(menu, "Add zoom here", true) {
+                    context_action = Some(ContextAction::Zoom);
+                }
+                menu.label(egui::RichText::new("Drag in the empty track to set its length.").small().color(MUTED));
+            }
+            2 => {
+                let has_camera = st.project.media.camera.is_some();
+                egui::Grid::new(menu.id().with("camera-actions")).num_columns(2).spacing(Vec2::new(8.0, 2.0)).show(menu, |ui| {
+                    for (index, (id, name)) in ops::LAYOUT_NAMES.iter().enumerate() {
+                        if menu_action(ui, &format!("Add {name}"), has_camera) {
+                            context_action = Some(ContextAction::Layout(id));
+                        }
+                        if index % 2 == 1 {
+                            ui.end_row();
+                        }
+                    }
+                });
+                if !has_camera {
+                    menu.label(egui::RichText::new("This recording has no camera track.").small().color(MUTED));
+                } else {
+                    menu.label(egui::RichText::new("Drag in the empty track to set timing.").small().color(MUTED));
+                }
+            }
+            3 => {
+                egui::Grid::new(menu.id().with("note-actions")).num_columns(2).spacing(Vec2::new(8.0, 2.0)).show(menu, |ui| {
+                    for (index, (id, name)) in ops::NOTE_NAMES.iter().enumerate() {
+                        if menu_action(ui, &format!("Add {name}"), true) {
+                            context_action = Some(ContextAction::Annotation(id));
+                        }
+                        if index % 2 == 1 {
+                            ui.end_row();
+                        }
+                    }
+                });
+                menu.label(egui::RichText::new("Drag in the empty track to add timed text.").small().color(MUTED));
+            }
+            4 => {
+                if menu_action(menu, "Add caption", true) {
+                    context_action = Some(ContextAction::Caption);
+                }
+                menu.label(egui::RichText::new("Drag in the empty track to set timing.").small().color(MUTED));
+            }
+            5 => {
+                if menu_action(menu, "Choose audio file…", true) {
+                    context_action = Some(ContextAction::Music);
+                }
+            }
+            _ => {}
+        }
+        menu.separator();
+        menu.label(egui::RichText::new("Space  Play/pause  ·  S  Split  ·  Delete  Remove").small().color(MUTED));
+        if track == 1 {
+            menu.label(egui::RichText::new("Z  Add zoom at playhead  ·  A / D  Previous / next zoom").small().color(MUTED));
+        }
+        if track == 3 {
+            menu.label(egui::RichText::new(format!("{}  Duplicate selected note", if cfg!(target_os = "macos") { "⌘D" } else { "Ctrl+D" })).small().color(MUTED));
+        }
+        if context_action.is_some() {
+            menu.close();
+        }
+    });
+    if let Some(action) = context_action {
+        ui.ctx().data_mut(|data| data.insert_temp(context_id, (0usize, 0.0)));
+        st.seek(context_time);
+        match action {
+            ContextAction::Zoom => st.add_zoom_at_playhead(),
+            ContextAction::Layout(layout) => st.add_layout(layout),
+            ContextAction::Annotation(kind) => st.add_annotation(kind),
+            ContextAction::Caption => st.add_caption(),
+            ContextAction::Music => st.add_music(),
+        }
+    }
+
     let preview_now = st.timeline.preview.clone();
+    let press_origin = ui.ctx().input(|i| i.pointer.press_origin());
+    let event_pos = if resp_all.drag_started() { press_origin.or(pointer) } else { pointer };
     if resp_all.drag_started() || (resp_all.clicked() && st.timeline.drag.is_none()) {
-        if let Some(pos) = pointer {
+        if let Some(pos) = event_pos {
             let in_tracks = pos.x >= tracks_left;
             let in_ruler = pos.y < body_rect.min.y - v_off + RULER_H + 1.0;
             if !in_tracks {
                 // label column: nothing
-            } else if let Some(r) = add_music_rect.filter(|r| r.translate(Vec2::new(0.0, 0.0)).contains(pos) && pos.y > ty(5) - 1.0) {
-                let _ = r;
+            } else if resp_all.clicked() && add_music_rect.is_some_and(|r| r.contains(pos)) {
+                st.seek(t_of(pos.x));
                 st.add_music();
+            } else if let Some(kind) = if resp_all.drag_started() && !in_ruler && hit_block(pos, &preview_now).is_none() {
+                track_at(pos).and_then(|track| match track {
+                    1 => Some(Kind::Zoom),
+                    2 => Some(Kind::Layout),
+                    3 => Some(Kind::Annot),
+                    4 => Some(Kind::Caption),
+                    _ => None,
+                })
+            } else {
+                None
+            } {
+                st.timeline.drag = Some(Drag::Insert { kind, start_x: pos.x, start_ms: t_of(pos.x), end_ms: t_of(pos.x), moved: false });
             } else if let (false, Some(si)) = (in_ruler, hit_marker(pos)) {
                 let id = st.project.scene.slices[si].id.clone();
                 st.select(Sel::Slice(id));
@@ -716,6 +842,12 @@ fn body(st: &mut EditorState, ui: &mut egui::Ui) {
         if let (Some(pos), Some(drag)) = (pointer, st.timeline.drag.clone()) {
             match drag {
                 Drag::Scrub { .. } => st.seek(t_of(pos.x)),
+                Drag::Insert { kind, start_x, start_ms, mut moved, .. } => {
+                    if (pos.x - start_x).abs() >= 3.0 || moved {
+                        moved = true;
+                        st.timeline.drag = Some(Drag::Insert { kind, start_x, start_ms, end_ms: t_of(pos.x), moved });
+                    }
+                }
                 Drag::Block { kind, id, mode, x0, a0, b0, mut moved, group, music } => {
                     if (pos.x - x0).abs() >= 3.0 || moved {
                         moved = true;
@@ -797,6 +929,17 @@ fn body(st: &mut EditorState, ui: &mut egui::Ui) {
                         st.play();
                     }
                 }
+                Drag::Insert { kind, start_ms, end_ms, moved, .. } if moved => {
+                    let (start, end) = (start_ms.min(end_ms), start_ms.max(end_ms));
+                    match kind {
+                        Kind::Zoom => st.add_zoom_range(start, end),
+                        Kind::Layout => st.add_layout_range("bubble", start, end),
+                        Kind::Annot => st.add_annotation_range("text", start, end),
+                        Kind::Caption => st.add_caption_range(start, end),
+                        _ => {}
+                    }
+                }
+                Drag::Insert { .. } => {}
                 Drag::Bar { .. } => {}
                 Drag::Block { kind, id, mode, moved, group, a0, b0, .. } => {
                     if !moved {
@@ -845,6 +988,22 @@ fn body(st: &mut EditorState, ui: &mut egui::Ui) {
         }
         paint_block(ui, &tpainter, b, r, dragging);
     }
+    if let Some(Drag::Insert { kind, start_ms, end_ms, moved: true, .. }) = &st.timeline.drag {
+        let (a, b) = (start_ms.min(*end_ms), start_ms.max(*end_ms));
+        let (top, height, color, label) = match kind {
+            Kind::Zoom => (ty(1), TRACK_H, ACCENT, "Zoom"),
+            Kind::Layout => (ty(2), TRACK_H, BLOCK_LAYOUT, "Bubble"),
+            Kind::Annot => (ty(3) + 4.0, 28.0, BLOCK_NOTE, "Text"),
+            Kind::Caption => (ty(4), TRACK_H, BLOCK_CAPTION, "Caption"),
+            _ => unreachable!(),
+        };
+        let rect = Rect::from_min_max(Pos2::new(x_of(a), top), Pos2::new(x_of(b).max(x_of(a) + 4.0), top + height));
+        tpainter.rect_filled(rect, CornerRadius::same(6), alpha(color, 0.65));
+        tpainter.rect_stroke(rect, CornerRadius::same(6), Stroke::new(1.0, color), StrokeKind::Inside);
+        if rect.width() > 48.0 {
+            tpainter.text(rect.center(), Align2::CENTER_CENTER, label, kit::font(12.0), Color32::WHITE);
+        }
+    }
     // transition markers
     for (t, si) in &markers {
         let c = Pos2::new(x_of(*t), ty(0) + TRACK_H / 2.0);
@@ -867,7 +1026,7 @@ fn body(st: &mut EditorState, ui: &mut egui::Ui) {
         for w in [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()].windows(2) {
             tpainter.extend(Shape::dashed_line(&[w[0], w[1]], Stroke::new(1.0, col), 4.0, 3.0));
         }
-        tpainter.text(r.center(), Align2::CENTER_CENTER, "+ Add music", kit::font(13.0), if hov { Color32::from_rgb(0xd3, 0xf5, 0xe5) } else { MUTED });
+        tpainter.text(r.center(), Align2::CENTER_CENTER, "+ Add music · Right-click for actions", kit::font(13.0), if hov { Color32::from_rgb(0xd3, 0xf5, 0xe5) } else { MUTED });
     }
 
     // playhead

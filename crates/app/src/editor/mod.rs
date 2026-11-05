@@ -650,6 +650,18 @@ impl EditorState {
         self.tab = Tab::Zoom;
     }
 
+    pub fn add_zoom_range(&mut self, start_out_ms: f64, end_out_ms: f64) {
+        let Some((start, end)) = self.source_range_for_output(start_out_ms, end_out_ms, 300.0) else { return };
+        let id = self.new_id("zoom");
+        let zoom = self.project.config.animations.default_zoom;
+        self.edit(|p| {
+            p.scene.zooms.push(screencraft_core::project::ZoomRegion { id: id.clone(), zoom, source_start_ms: start, source_end_ms: end, ..Default::default() })
+        });
+        self.seek(start_out_ms);
+        self.select(Sel::Zoom(id));
+        self.tab = Tab::Zoom;
+    }
+
     pub fn add_layout(&mut self, layout: &str) {
         let (start, end) = ops::region_at(&self.project, self.playhead_ms, 4000.0);
         let id = self.new_id("layout");
@@ -667,12 +679,40 @@ impl EditorState {
         self.tab = Tab::Camera;
     }
 
+    pub fn add_layout_range(&mut self, layout: &str, start_out_ms: f64, end_out_ms: f64) {
+        let Some((start, end)) = self.source_range_for_output(start_out_ms, end_out_ms, 200.0) else { return };
+        let id = self.new_id("layout");
+        let layout = layout.to_string();
+        self.edit(|p| {
+            p.scene.camera_layouts.push(screencraft_core::project::CameraLayoutRegion {
+                id: id.clone(),
+                source_start_ms: start,
+                source_end_ms: end,
+                layout,
+                settings: None,
+            })
+        });
+        self.seek(start_out_ms);
+        self.select(Sel::Layout(id));
+        self.tab = Tab::Camera;
+    }
+
     pub fn add_annotation(&mut self, kind: &str) {
         let len = if kind == "blur" || kind == "pixelate" { 6000.0 } else { 3500.0 };
         let (start, end) = ops::region_at(&self.project, self.playhead_ms, len);
         let id = self.new_id("annot");
         let a = ops::new_annotation(kind, id.clone(), start, end);
         self.edit(|p| p.scene.annotations.push(a));
+        self.select(Sel::Annot(id));
+        self.tab = Tab::Annotate;
+    }
+
+    pub fn add_annotation_range(&mut self, kind: &str, start_out_ms: f64, end_out_ms: f64) {
+        let Some((start, end)) = self.source_range_for_output(start_out_ms, end_out_ms, 200.0) else { return };
+        let id = self.new_id("annot");
+        let annotation = ops::new_annotation(kind, id.clone(), start, end);
+        self.edit(|p| p.scene.annotations.push(annotation));
+        self.seek(start_out_ms);
         self.select(Sel::Annot(id));
         self.tab = Tab::Annotate;
     }
@@ -691,6 +731,35 @@ impl EditorState {
         });
         self.select(Sel::Caption(id));
         self.tab = Tab::Captions;
+    }
+
+    pub fn add_caption_range(&mut self, start_out_ms: f64, end_out_ms: f64) {
+        let Some((start, end)) = self.source_range_for_output(start_out_ms, end_out_ms, 200.0) else { return };
+        let id = self.new_id("cap");
+        self.edit(|p| {
+            p.scene.subtitles.push(screencraft_core::project::Subtitle {
+                id: id.clone(),
+                source_start_ms: start,
+                source_end_ms: end,
+                text: "Your caption".into(),
+                word_starts: vec![],
+            })
+        });
+        self.seek(start_out_ms);
+        self.select(Sel::Caption(id));
+        self.tab = Tab::Captions;
+    }
+
+    fn source_range_for_output(&self, start_out_ms: f64, end_out_ms: f64, min_len: f64) -> Option<(f64, f64)> {
+        let duration = self.duration_ms();
+        let start_out_ms = start_out_ms.clamp(0.0, duration);
+        let end_out_ms = end_out_ms.clamp(start_out_ms, duration);
+        let (start, slice_index) = ops::out_to_src(&self.project.scene.slices, start_out_ms);
+        let slice = self.project.scene.slices.get(slice_index)?;
+        let slice_start_out = self.project.scene.slices[..slice_index].iter().map(ops::slice_len).sum::<f64>();
+        let end_out_ms = end_out_ms.min(slice_start_out + ops::slice_len(slice));
+        let end = (slice.source_start_ms + (end_out_ms - slice_start_out) * slice.time_scale).min(slice.source_end_ms);
+        (end - start >= min_len).then_some((start, end))
     }
 
     /// Split at the playhead. Nothing selected: everything (clips, zooms, music) is cut.
