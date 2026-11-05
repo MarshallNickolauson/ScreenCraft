@@ -359,7 +359,8 @@ impl Recording {
             a.stop();
         }
         let end_ns = self.clock.now_ns();
-        self.ctl.send(Ctl::Stop { end_ns }).map_err(|_| "recorder stopped unexpectedly".to_string())?;
+        // Capture shutdown may close the channel; join the worker for its result.
+        let _ = self.ctl.send(Ctl::Stop { end_ns });
         let result = self
             .worker
             .take()
